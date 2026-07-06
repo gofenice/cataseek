@@ -86,6 +86,17 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/hosting', hostingRoutes);
 
+// The super-admin subdomain (e.g. console.cataseek.com) lands on the admin area
+const superAdminHost = process.env.SUPERADMIN_HOST;
+if (superAdminHost) {
+  app.use((req: Request, res: Response, next: any) => {
+    if (req.hostname === superAdminHost && req.path === '/') {
+      return res.redirect('/admin');
+    }
+    next();
+  });
+}
+
 // Serve static files from the React app build
 const dashboardPath = path.join(__dirname, '../dashboard/dist');
 app.use(express.static(dashboardPath));
