@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { isConsoleHost } from '../utils/host';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -26,6 +27,10 @@ const Login: React.FC = () => {
         try {
             const response = await api.post('/tenants/login', formData);
             const tenantData = response.data.tenant;
+            if (isConsoleHost && tenantData.role !== 'admin') {
+                setError('This login is for Cataseek administrators only');
+                return;
+            }
             login(response.data.token, tenantData);
             navigate(tenantData.role === 'admin' ? '/admin' : '/');
         } catch (err: any) {
@@ -48,7 +53,7 @@ const Login: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <Logo />
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                        Merchant dashboard
+                        {isConsoleHost ? 'Super admin console' : 'Merchant dashboard'}
                     </p>
                 </div>
 
@@ -64,10 +69,10 @@ const Login: React.FC = () => {
                 }}>
                     <div>
                         <h1 style={{ fontSize: '1.4rem', fontWeight: 600, margin: '0 0 4px', letterSpacing: '-0.025em' }}>
-                            Welcome back
+                            {isConsoleHost ? 'Super Admin' : 'Welcome back'}
                         </h1>
                         <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: 0 }}>
-                            Log in to manage your store search
+                            {isConsoleHost ? 'Sign in to the Cataseek control panel' : 'Log in to manage your store search'}
                         </p>
                     </div>
 
@@ -121,15 +126,17 @@ const Login: React.FC = () => {
                         className="btn-primary"
                         style={{ marginTop: '0.25rem', width: '100%', padding: '0.75rem' }}
                     >
-                        {loading ? 'Logging in…' : 'Login to Dashboard'}
+                        {loading ? 'Logging in…' : isConsoleHost ? 'Login to Console' : 'Login to Dashboard'}
                     </button>
 
-                    <p style={{ fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)', margin: 0 }}>
-                        No account?{' '}
-                        <Link to="/register" style={{ color: 'var(--primary)', fontWeight: 500 }}>
-                            Start free trial
-                        </Link>
-                    </p>
+                    {!isConsoleHost && (
+                        <p style={{ fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)', margin: 0 }}>
+                            No account?{' '}
+                            <Link to="/register" style={{ color: 'var(--primary)', fontWeight: 500 }}>
+                                Start free trial
+                            </Link>
+                        </p>
+                    )}
                 </form>
             </div>
         </div>
