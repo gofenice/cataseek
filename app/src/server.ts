@@ -77,6 +77,17 @@ app.get('/health', (req: Request, res: Response) => {
   });
 });
 
+// Host separation: when SUPERADMIN_HOST is set, the admin API only answers on that host
+const superAdminHost = process.env.SUPERADMIN_HOST;
+if (superAdminHost) {
+  app.use('/api/admin', (req: Request, res: Response, next: any) => {
+    if (req.hostname !== superAdminHost) {
+      return res.status(403).json({ error: 'Not available on this host' });
+    }
+    next();
+  });
+}
+
 // API Routes
 app.use('/api/tenants', tenantRoutes);
 app.use('/api/tenants', settingsRoutes);
@@ -87,7 +98,6 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/hosting', hostingRoutes);
 
 // The super-admin subdomain (e.g. console.cataseek.com) lands on the admin area
-const superAdminHost = process.env.SUPERADMIN_HOST;
 if (superAdminHost) {
   app.use((req: Request, res: Response, next: any) => {
     if (req.hostname === superAdminHost && req.path === '/') {

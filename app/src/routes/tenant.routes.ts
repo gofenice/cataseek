@@ -349,6 +349,18 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Host separation: super admins sign in only on the console host,
+    // merchants only elsewhere (no restriction when SUPERADMIN_HOST is unset, e.g. local dev)
+    const superAdminHost = process.env.SUPERADMIN_HOST;
+    if (superAdminHost) {
+      if (tenant.role === 'admin' && req.hostname !== superAdminHost) {
+        return res.status(403).json({ error: `Super admin sign-in is only available at https://${superAdminHost}` });
+      }
+      if (tenant.role !== 'admin' && req.hostname === superAdminHost) {
+        return res.status(401).json({ error: 'Invalid credentials' });
+      }
+    }
+
     const token = generateToken({
       tenantId: tenant.id,
       apiKey: tenant.api_key,
