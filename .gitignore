@@ -13,6 +13,9 @@ build/
 # Meilisearch binary & local data (exe is >100MB, exceeds GitHub limit)
 meilisearch/
 
+# Local DB dumps (contain real user data / password hashes)
+/cataseek-db-dump.sql
+
 # Archives & extraction junk
 *.zip
 extracted/
