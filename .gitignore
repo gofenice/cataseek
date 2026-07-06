@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+build/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Meilisearch binary & local data (exe is >100MB, exceeds GitHub limit)
+meilisearch/
+
+# Archives & extraction junk
+*.zip
+extracted/
+__MACOSX/
+
+# Logs
+logs/
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+
+# Temp
+.temp/
+.tmp/
