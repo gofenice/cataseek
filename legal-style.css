@@ -1,0 +1,69 @@
+/* Shared style for Cataseek legal & contact pages */
+:root {
+  --bg: #F6F4EE;
+  --bg-2: #EFEDE5;
+  --ink: #0E0E0C;
+  --ink-2: #54524C;
+  --ink-3: #8B887F;
+  --line: #E2DFD5;
+  --accent: #C0E457;
+  --card: #FFFFFF;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: 'Geist', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  font-size: 15.5px;
+}
+a { color: inherit; }
+.mono { font-family: 'Geist Mono', ui-monospace, monospace; }
+
+.nav {
+  position: sticky; top: 0; z-index: 50;
+  backdrop-filter: blur(14px);
+  background: rgba(246,244,238,0.85);
+  border-bottom: 1px solid var(--line);
+}
+.nav-inner {
+  max-width: 880px; margin: 0 auto; padding: 0 28px;
+  height: 64px; display: flex; align-items: center; justify-content: space-between;
+}
+.nav a.brand { display: inline-flex; align-items: center; gap: 9px; text-decoration: none; font-weight: 600; font-size: 17px; letter-spacing: -0.02em; }
+.nav a.back { font-size: 14px; color: var(--ink-2); text-decoration: none; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); }
+.nav a.back:hover { border-color: #CFCBBE; }
+
+.page {
+  max-width: 880px; margin: 0 auto; padding: 64px 28px 96px;
+}
+.eyebrow {
+  font-family: 'Geist Mono', monospace; font-size: 11px; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--ink-3);
+  display: inline-flex; align-items: center; gap: 8px; margin-bottom: 18px;
+}
+.eyebrow .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(192,228,87,0.18); }
+h1 { font-size: clamp(30px, 4.4vw, 44px); letter-spacing: -0.025em; line-height: 1.08; font-weight: 500; margin: 0 0 10px; }
+.updated { color: var(--ink-3); font-size: 13.5px; margin-bottom: 44px; }
+h2 { font-size: 20px; letter-spacing: -0.015em; font-weight: 600; margin: 40px 0 12px; }
+h3 { font-size: 16px; font-weight: 600; margin: 26px 0 8px; }
+p, li { color: var(--ink-2); }
+ul { padding-left: 1.3rem; }
+li { margin-bottom: 6px; }
+strong { color: var(--ink); }
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  padding: 24px 28px; margin: 18px 0;
+}
+.notice {
+  background: rgba(192,228,87,0.14); border: 1px solid rgba(192,228,87,0.5);
+  border-radius: 12px; padding: 14px 18px; font-size: 14px; color: var(--ink-2);
+}
+footer.legal {
+  border-top: 1px solid var(--line); padding: 28px;
+  text-align: center; color: var(--ink-3); font-size: 13px;
+}
+footer.legal a { color: var(--ink-2); text-decoration: none; margin: 0 10px; }
+footer.legal a:hover { color: var(--ink); }
