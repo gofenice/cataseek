@@ -114,3 +114,15 @@ CREATE TABLE IF NOT EXISTS invoices (
     INDEX idx_tenant (tenant_id),
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Tenant domains table
+CREATE TABLE IF NOT EXISTS tenant_domains (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id  INT NOT NULL,
+  domain     VARCHAR(253) NOT NULL,
+  label      VARCHAR(100) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_domain (domain),
+  INDEX idx_tenant (tenant_id),
+  FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
