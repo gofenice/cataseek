@@ -14,6 +14,7 @@ const AdminLayout: React.FC = () => {
         { to: '/admin/tenants', label: 'Tenants', icon: '🏪', end: false },
         { to: '/admin/plans', label: 'Plans', icon: '📋', end: false },
         { to: '/admin/hosting', label: 'Hosting', icon: '🖥️', end: false },
+        { to: '/admin/modules', label: 'Modules', icon: '🧩', end: false },
         { to: '/admin/orders', label: 'Orders', icon: '🧾', end: false },
         { to: '/admin/payments', label: 'Payment Settings', icon: '💳', end: false },
     ];

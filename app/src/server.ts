@@ -12,7 +12,9 @@ import adminRoutes from './routes/admin.routes';
 import settingsRoutes from './routes/settings.routes';
 import billingRoutes from './routes/billing.routes';
 import hostingRoutes from './routes/hosting.routes';
+import moduleRoutes from './routes/module.routes';
 import { ensureHostingTables } from './services/hosting.service';
+import { ensureModuleTables } from './services/modules.service';
 import { ensureAccountColumns, startTrialEmailScheduler } from './services/account.service';
 
 // Load environment variables
@@ -96,6 +98,7 @@ app.use('/api/plans', planRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/hosting', hostingRoutes);
+app.use('/api/modules', moduleRoutes);
 
 // The super-admin subdomain (e.g. console.cataseek.com) lands on the admin area
 if (superAdminHost) {
@@ -132,6 +135,7 @@ app.use((err: Error, req: Request, res: Response, next: any) => {
 
 // Run product-flag migrations up front so auth queries can rely on the columns
 ensureHostingTables().catch((e) => console.error('Hosting migration error:', e));
+ensureModuleTables().catch((e) => console.error('Module migration error:', e));
 ensureAccountColumns()
     .then(() => startTrialEmailScheduler())
     .catch((e) => console.error('Account migration error:', e));

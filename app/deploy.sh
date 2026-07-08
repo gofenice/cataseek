@@ -6,6 +6,9 @@
 echo "🚀 Starting Cataseek Deployment..."
 
 # 1. Update Backend
+echo "📦 Installing backend dependencies..."
+npm install
+
 echo "📦 Building Backend..."
 npm run build
 if [ $? -ne 0 ]; then
@@ -16,6 +19,7 @@ fi
 # 2. Update Frontend
 echo "🎨 Building Dashboard Frontend..."
 cd dashboard
+npm install
 VITE_API_URL=/api npm run build
 if [ $? -ne 0 ]; then
     echo "❌ Frontend build failed. Aborting."

@@ -1,5 +1,7 @@
 import express, { Response } from 'express';
+import multer from 'multer';
 import { query } from '../config/database';
+import { MODULES_DIR, removeModuleFile } from '../services/modules.service';
 import { authenticateJWT, requireAdmin, AuthRequest } from '../middleware/auth';
 import { deleteTenantIndex } from '../config/meilisearch';
 import { getRazorpayConfig, saveRazorpayConfig, maskSecret, getCompanyConfig, saveCompanyConfig } from '../services/payment-settings.service';
@@ -571,6 +573,114 @@ router.get('/orders', async (req: AuthRequest, res: Response) => {
     } catch (error) {
         console.error('Admin orders list error:', error);
         res.status(500).json({ error: 'Failed to fetch orders' });
+    }
+});
+
+// ─── Platform modules (plugin packages) ──────────────────────────────────────
+// One downloadable zip per e-commerce platform; a new upload replaces the old one.
+
+const moduleUpload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, MODULES_DIR),
+        // Text fields are appended before the file on the client, so req.body.platform
+        // is already parsed here; fall back to a generic name just in case.
+        filename: (req, _file, cb) => {
+            const platform = String((req.body as any)?.platform || 'module').replace(/[^a-z0-9_-]/gi, '');
+            cb(null, `${platform || 'module'}-${Date.now()}.zip`);
+        },
+    }),
+    limits: { fileSize: 100 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        if (!file.originalname.toLowerCase().endsWith('.zip')) {
+            return cb(new Error('Only .zip files are allowed'));
+        }
+        cb(null, true);
+    },
+});
+
+// GET /api/admin/modules — all packages incl. inactive, with download counts
+router.get('/modules', async (req: AuthRequest, res: Response) => {
+    try {
+        const modules: any = await query(`
+            SELECT id, platform, name, version, description, original_name, file_size,
+                   download_count, is_active, created_at, updated_at
+            FROM platform_modules ORDER BY platform
+        `);
+        res.json({ modules });
+    } catch (error) {
+        console.error('Admin list modules error:', error);
+        res.status(500).json({ error: 'Failed to fetch modules' });
+    }
+});
+
+// POST /api/admin/modules — multipart upload (fields: platform, name, version, description, file)
+router.post('/modules', (req: AuthRequest, res: Response) => {
+    moduleUpload.single('file')(req, res, async (err: any) => {
+        if (err) {
+            return res.status(400).json({ error: err.message || 'Upload failed' });
+        }
+        const file = (req as any).file as Express.Multer.File | undefined;
+        try {
+            const platform = String(req.body.platform || '').trim().toLowerCase();
+            const name = String(req.body.name || '').trim();
+            const version = String(req.body.version || '1.0.0').trim();
+            const description = String(req.body.description || '').trim() || null;
+
+            if (!file) return res.status(400).json({ error: 'Module zip file is required' });
+            if (!platform || !name) {
+                removeModuleFile(file.filename);
+                return res.status(400).json({ error: 'Platform and name are required' });
+            }
+
+            const existing: any = await query('SELECT id, filename FROM platform_modules WHERE platform = ?', [platform]);
+            if (existing && existing.length > 0) {
+                removeModuleFile(existing[0].filename);
+                await query(
+                    `UPDATE platform_modules
+                     SET name = ?, version = ?, description = ?, filename = ?, original_name = ?, file_size = ?, is_active = TRUE
+                     WHERE id = ?`,
+                    [name, version, description, file.filename, file.originalname, file.size, existing[0].id]
+                );
+                return res.json({ message: `Module for ${platform} replaced`, id: existing[0].id });
+            }
+
+            const result: any = await query(
+                `INSERT INTO platform_modules (platform, name, version, description, filename, original_name, file_size)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [platform, name, version, description, file.filename, file.originalname, file.size]
+            );
+            res.status(201).json({ message: 'Module uploaded', id: result.insertId });
+        } catch (error) {
+            if (file) removeModuleFile(file.filename);
+            console.error('Admin upload module error:', error);
+            res.status(500).json({ error: 'Failed to upload module' });
+        }
+    });
+});
+
+// PATCH /api/admin/modules/:id — toggle visibility on the merchant Plugins page
+router.patch('/modules/:id', async (req: AuthRequest, res: Response) => {
+    try {
+        await query('UPDATE platform_modules SET is_active = ? WHERE id = ?', [req.body.is_active ? 1 : 0, req.params.id]);
+        res.json({ message: 'Module updated' });
+    } catch (error) {
+        console.error('Admin update module error:', error);
+        res.status(500).json({ error: 'Failed to update module' });
+    }
+});
+
+// DELETE /api/admin/modules/:id — remove the package and its file
+router.delete('/modules/:id', async (req: AuthRequest, res: Response) => {
+    try {
+        const rows: any = await query('SELECT filename FROM platform_modules WHERE id = ?', [req.params.id]);
+        if (!rows || rows.length === 0) return res.status(404).json({ error: 'Module not found' });
+
+        removeModuleFile(rows[0].filename);
+        await query('DELETE FROM platform_modules WHERE id = ?', [req.params.id]);
+        res.json({ message: 'Module deleted' });
+    } catch (error) {
+        console.error('Admin delete module error:', error);
+        res.status(500).json({ error: 'Failed to delete module' });
     }
 });
 

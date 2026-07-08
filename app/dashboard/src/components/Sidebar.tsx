@@ -10,6 +10,7 @@ import {
     LogOut,
     BarChart3,
     Server,
+    Download,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
@@ -44,6 +45,7 @@ const Sidebar: React.FC = () => {
             { icon: <Key size={18} />,             label: 'API Keys',       path: '/keys'      },
             { icon: <Package size={18} />,         label: 'Catalog',        path: '/catalog'   },
             { icon: <Search size={18} />,          label: 'Search Preview', path: '/preview'   },
+            { icon: <Download size={18} />,        label: 'Plugins',        path: '/plugins'   },
         ] : []),
         ...(hostingEnabled ? [{ icon: <Server size={18} />, label: 'Hosting', path: '/hosting' }] : []),
         { icon: <CreditCard size={18} />,      label: 'Billing',        path: '/billing'   },

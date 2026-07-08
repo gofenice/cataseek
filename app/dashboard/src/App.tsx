@@ -19,6 +19,7 @@ import Billing from './pages/Billing';
 import Settings from './pages/Settings';
 import Analytics from './pages/Analytics';
 import Profile from './pages/Profile';
+import Plugins from './pages/Plugins';
 
 // Admin pages
 import AdminDashboard from './pages/admin/AdminDashboard';
@@ -28,6 +29,7 @@ import AdminPlans from './pages/admin/AdminPlans';
 import AdminOrders from './pages/admin/AdminOrders';
 import AdminPayments from './pages/admin/AdminPayments';
 import AdminHosting from './pages/admin/AdminHosting';
+import AdminModules from './pages/admin/AdminModules';
 import Hosting from './pages/Hosting';
 
 import { isConsoleHost } from './utils/host';
@@ -59,6 +61,7 @@ function App() {
             <Route path="orders" element={<AdminOrders />} />
             <Route path="payments" element={<AdminPayments />} />
             <Route path="hosting" element={<AdminHosting />} />
+            <Route path="modules" element={<AdminModules />} />
           </Route>
 
           {/* On the console host, the root always leads to the admin area */}
@@ -75,6 +78,7 @@ function App() {
             <Route path="keys" element={<APIKeys />} />
             <Route path="catalog" element={<Catalog />} />
             <Route path="preview" element={<Preview />} />
+            <Route path="plugins" element={<Plugins />} />
             <Route path="billing" element={<Billing />} />
             <Route path="hosting" element={<Hosting />} />
             <Route path="settings" element={<Settings />} />

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { isConsoleHost } from '../utils/host';
+import { isConsoleHost, isLocalDev } from '../utils/host';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -29,6 +29,11 @@ const Login: React.FC = () => {
             const tenantData = response.data.tenant;
             if (isConsoleHost && tenantData.role !== 'admin') {
                 setError('This login is for Cataseek administrators only');
+                return;
+            }
+            // Mirror guard: super-admin accounts only sign in on the console subdomain
+            if (!isConsoleHost && !isLocalDev && tenantData.role === 'admin') {
+                setError('Super admin accounts must sign in at the console subdomain');
                 return;
             }
             login(response.data.token, tenantData);
