@@ -102,18 +102,34 @@ export const authenticateApiKey = async (req: AuthRequest, res: Response, next: 
       tenantCache.set(apiKey, tenant, 5 * 60 * 1000); // 5 minutes
     }
 
-    // Domain verification
+    // Domain auto-registration on password-authenticated calls (sync, delete, etc.)
+    // The tenant has proven identity with API key + password, so we trust the domain
+    // they are calling from and auto-register it if it's new.
+    // Security guard: still reject if the domain is already claimed by a DIFFERENT tenant.
     const requestDomain = req.headers['x-store-domain'] as string;
+
     if (requestDomain) {
       const normalizeDomain = (d: string) =>
-        d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '');
-      const storedDomain = normalizeDomain(tenant.store_domain);
+        d ? d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '') : '';
       const incomingDomain = normalizeDomain(requestDomain);
       const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
-      if (!isLocalhost && storedDomain !== incomingDomain) {
-        return res.status(401).json({
-          error: `Authentication failed: Domain mismatch. Required: ${storedDomain}, Received: ${incomingDomain}`
-        });
+      if (!isLocalhost && incomingDomain) {
+        const conflict: any = await query(
+          'SELECT tenant_id FROM tenant_domains WHERE domain = ?',
+          [incomingDomain]
+        );
+        if (conflict && conflict.length > 0 && conflict[0].tenant_id !== tenant.id) {
+          return res.status(401).json({
+            error: `Authentication failed: Domain "${incomingDomain}" is registered to a different account`
+          });
+        }
+        // Auto-register new domain — first sync from this store adds it to the allowlist
+        await query(
+          `INSERT INTO tenant_domains (tenant_id, domain, label)
+           VALUES (?, ?, 'Auto-registered')
+           ON DUPLICATE KEY UPDATE label = label`,
+          [tenant.id, incomingDomain]
+        );
       }
     }
 
@@ -153,16 +169,28 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
       tenantCache.set(apiKey, tenant, 5 * 60 * 1000);
     }
 
-    // Domain verification
+    // Domain auto-registration on password-authenticated calls (sync, delete, etc.)
+    // The tenant has proven identity with API key + password, so we trust the domain
+    // they are calling from and auto-register it if it's new.
+    // Security guard: still reject if the domain is already claimed by a DIFFERENT tenant.    
     const requestDomain = req.headers['x-store-domain'] as string;
     const normalizeDomain = (d: string) =>
       d ? d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '') : '';
-    const storedDomain = normalizeDomain(tenant.store_domain);
     const incomingDomain = normalizeDomain(requestDomain);
     const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
-
-    if (!requestDomain || (!isLocalhost && storedDomain !== incomingDomain)) {
-      return res.status(403).json({ error: 'Domain verification failed' });
+    
+    if (!requestDomain) {
+      return res.status(403).json({ error: 'Domain verification failed: X-Store-Domain header is required' });
+    }
+    
+    if (!isLocalhost) {
+      const allowed: any = await query(
+        'SELECT id FROM tenant_domains WHERE tenant_id = ? AND domain = ?',
+        [tenant.id, incomingDomain]
+      );
+      if (!allowed || allowed.length === 0) {
+        return res.status(403).json({ error: `Domain "${incomingDomain}" is not authorised for this account` });
+      }
     }
 
     if (tenant.status !== 'active' && tenant.status !== 'trial') {

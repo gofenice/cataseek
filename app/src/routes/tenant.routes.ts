@@ -800,4 +800,118 @@ router.get('/analytics', authenticateJWT, async (req: AuthRequest, res: Response
   }
 });
 
+// ─── Domain Allowlist Management ─────────────────────────────────────────────
+// Tenants can register multiple store domains under one account.
+// All registered domains pass the X-Store-Domain verification check.
+
+// GET /api/tenants/domains — list all allowed domains for the logged-in tenant
+router.get('/domains', authenticateJWT, async (req: AuthRequest, res: Response) => {
+  try {
+    const rows: any = await query(
+      'SELECT id, domain, label, created_at FROM tenant_domains WHERE tenant_id = ? ORDER BY created_at ASC',
+      [req.user.id]
+    );
+    res.json({ domains: rows });
+  } catch (error) {
+    console.error('Domains fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch domains' });
+  }
+});
+
+// POST /api/tenants/domains — add a new allowed domain
+router.post(
+  '/domains',
+  authenticateJWT,
+  [
+    body('domain')
+      .trim()
+      .notEmpty().withMessage('Domain is required')
+      .isLength({ max: 253 }).withMessage('Domain too long')
+  ],
+  async (req: AuthRequest, res: Response) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ errors: errors.array() });
+      }
+
+      const rawDomain: string = req.body.domain;
+      const label: string = (req.body.label || '').toString().trim().slice(0, 100);
+
+      // Normalize: strip scheme, www, trailing slash, lowercase
+      const domain = rawDomain
+        .toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^www\./, '')
+        .replace(/\/$/, '');
+
+      if (!domain) {
+        return res.status(400).json({ error: 'Invalid domain' });
+      }
+
+      // Check if domain already belongs to another tenant
+      const conflict: any = await query(
+        'SELECT tenant_id FROM tenant_domains WHERE domain = ?',
+        [domain]
+      );
+      if (conflict && conflict.length > 0 && conflict[0].tenant_id !== req.user.id) {
+        return res.status(409).json({ error: 'Domain is already registered by another account' });
+      }
+
+      const result: any = await query(
+        `INSERT INTO tenant_domains (tenant_id, domain, label)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE label = VALUES(label)`,
+        [req.user.id, domain, label]
+      );
+
+      res.status(201).json({
+        id: result.insertId || null,
+        domain,
+        label,
+        message: 'Domain added successfully'
+      });
+    } catch (error) {
+      console.error('Domain add error:', error);
+      res.status(500).json({ error: 'Failed to add domain' });
+    }
+  }
+);
+
+// DELETE /api/tenants/domains/:id — remove a domain (cannot remove the last one)
+router.delete('/domains/:id', authenticateJWT, async (req: AuthRequest, res: Response) => {
+  try {
+    const domainId = parseInt(req.params.id);
+    if (!domainId) {
+      return res.status(400).json({ error: 'Invalid domain ID' });
+    }
+
+    // Verify ownership
+    const rows: any = await query(
+      'SELECT id FROM tenant_domains WHERE id = ? AND tenant_id = ?',
+      [domainId, req.user.id]
+    );
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ error: 'Domain not found' });
+    }
+
+    // Prevent deleting the last domain — would lock the tenant out
+    const countRows: any = await query(
+      'SELECT COUNT(*) AS cnt FROM tenant_domains WHERE tenant_id = ?',
+      [req.user.id]
+    );
+    if (Number(countRows[0]?.cnt || 0) <= 1) {
+      return res.status(400).json({
+        error: 'Cannot remove your only registered domain. Add another domain first.'
+      });
+    }
+
+    await query('DELETE FROM tenant_domains WHERE id = ? AND tenant_id = ?', [domainId, req.user.id]);
+    res.json({ success: true, message: 'Domain removed' });
+  } catch (error) {
+    console.error('Domain delete error:', error);
+    res.status(500).json({ error: 'Failed to remove domain' });
+  }
+});
+
 export default router;

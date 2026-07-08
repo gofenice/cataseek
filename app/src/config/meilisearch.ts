@@ -119,6 +119,7 @@ export const searchProducts = async (
     offset?: number;
     sort?: string[];
     facets?: string[];
+    attributesToRetrieve?: string[]; // slim payload for suggestion requests
   }
 ) => {
   const index = client.index(indexName);
@@ -150,15 +151,19 @@ export const searchProducts = async (
     filterString += ` AND price <= ${filters.maxPrice}`;
   }
 
-
-
-  return await index.search(query, {
+  const searchParams: Record<string, any> = {
     filter: filterString,
     limit: options?.limit || 20,
     offset: options?.offset || 0,
     sort: options?.sort,
     facets: options?.facets
-  });
+  };
+
+  if (options?.attributesToRetrieve && options.attributesToRetrieve.length > 0) {
+    searchParams.attributesToRetrieve = options.attributesToRetrieve;
+  }
+
+  return await index.search(query, searchParams);
 };
 
 export default client;
