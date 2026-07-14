@@ -67,7 +67,7 @@
 
         function fireDwellCount(q) {
             var domain = config.shopDomain || window.location.hostname;
-            var payload = { query: q, count_only: true };
+            var payload = { query: q, count_only: true, result_count: state.total };
             if (config.language) payload.language = config.language;
             if (config.storeId) payload.store_id = config.storeId;
             fetch(apiUrl + '/products/public/search', {

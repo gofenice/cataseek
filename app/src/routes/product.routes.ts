@@ -289,8 +289,38 @@ router.post(
       // ── Fast path: dwell-timer ping, no Meilisearch call, tracks billing/usage ──
       if (count_only) {
         const trimmedQuery = searchQuery.trim().toLowerCase();
+        const { result_count = 0 } = req.body;
+
         if (trimmedQuery.length > 0) {
           await trackUsage(tenantId, '/products/public/search');
+
+          if (trimmedQuery.length >= 3) {
+            await query(
+              `CREATE TABLE IF NOT EXISTS search_analytics (
+                id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+                tenant_id    INT NOT NULL,
+                query        VARCHAR(500) NOT NULL,
+                result_count INT NOT NULL DEFAULT 0,
+                language     VARCHAR(10)  DEFAULT 'en',
+                searched_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_tenant_date  (tenant_id, searched_at),
+                INDEX idx_tenant_query (tenant_id, query(100)),
+                FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+            ).catch(() => {});
+
+            await query(
+              `DELETE FROM search_analytics
+               WHERE tenant_id = ? AND searched_at >= NOW() - INTERVAL 10 SECOND`,
+              [tenantId]
+            ).catch(() => {});
+
+            await query(
+              `INSERT INTO search_analytics (tenant_id, query, result_count, language)
+               VALUES (?, ?, ?, ?)`,
+              [tenantId, trimmedQuery, result_count, language || 'en']
+            ).catch(() => {});
+          }
         }
         return res.json({ counted: true });
       }
@@ -314,47 +344,6 @@ router.post(
           facets
         }
       );
-
-      // ── Search Analytics logging (fire-and-forget, never delays the response) ──
-      // Only log queries with 3+ characters (skip single-character keystroke fragments).
-      // Dedup: delete any entry from the same tenant in the last 10 seconds before inserting.
-      // This way rapid keystrokes (h → ho → hom → home) overwrite each other and only
-      // the final completed query ("home") survives in the analytics.
-      if (searchQuery && searchQuery.trim().length >= 3) {
-        const hitCount = results.hits?.length ?? 0;
-        const trimmedQuery = searchQuery.trim().toLowerCase();
-        // Lazy table creation + dedup delete + insert — all silent on error
-        query(
-          `CREATE TABLE IF NOT EXISTS search_analytics (
-            id           BIGINT AUTO_INCREMENT PRIMARY KEY,
-            tenant_id    INT NOT NULL,
-            query        VARCHAR(500) NOT NULL,
-            result_count INT NOT NULL DEFAULT 0,
-            language     VARCHAR(10)  DEFAULT 'en',
-            searched_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-            INDEX idx_tenant_date  (tenant_id, searched_at),
-            INDEX idx_tenant_query (tenant_id, query(100)),
-            FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-          ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-        )
-          .then(() =>
-            // Delete any recent entry from the same tenant within the last 10 seconds
-            // (keystroke dedup — the new query replaces the intermediate ones)
-            query(
-              `DELETE FROM search_analytics
-               WHERE tenant_id = ? AND searched_at >= NOW() - INTERVAL 10 SECOND`,
-              [tenantId]
-            )
-          )
-          .then(() =>
-            query(
-              `INSERT INTO search_analytics (tenant_id, query, result_count, language)
-               VALUES (?, ?, ?, ?)`,
-              [tenantId, trimmedQuery, hitCount, language || 'en']
-            )
-          )
-          .catch(() => { }); // silently swallow — analytics must never affect search
-      }
 
       res.json({
         results: results.hits,
