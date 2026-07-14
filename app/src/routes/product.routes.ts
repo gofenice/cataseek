@@ -279,14 +279,24 @@ router.post(
         limit = 10,
         offset = 0,
         sort = [],
-        facets = ['categories', 'price']
+        facets = ['categories', 'price'],
+        count_only = false
       } = req.body;
 
       const tenantId = req.tenant.id;
       const indexName = req.tenant.meilisearch_index_name;
 
-      trackUsage(tenantId, '/products/public/search').catch(console.error); // fire-and-forget: don't block Meilisearch
+      // ── Fast path: dwell-timer ping, no Meilisearch call, tracks billing/usage ──
+      if (count_only) {
+        const trimmedQuery = searchQuery.trim().toLowerCase();
+        if (trimmedQuery.length > 0) {
+          await trackUsage(tenantId, '/products/public/search');
+        }
+        return res.json({ counted: true });
+      }
 
+      // Everything below is UNCHANGED from your original file — real search path,
+      // renders results.
       const results = await searchProducts(
         indexName,
         searchQuery,

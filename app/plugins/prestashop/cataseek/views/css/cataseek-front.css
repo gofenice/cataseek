@@ -1,18 +1,18 @@
 /**
  * Cataseek Frontend Styles - Fullscreen Redesign
+ *
+ * @author    gofenice
+ * @copyright 2026 gofenice
  */
-
 :root {
     --cataseek-color: #4F46E5;
     --cataseek-color-dark: #4338CA;
     --cataseek-orange: var(--cataseek-color); /* Dynamically updated by JS from dashboard settings */
 }
-
 /* === Trigger Button / Icon === */
 #cataseek-search-container {
     padding: 10px;
 }
-
 #cataseek-search-container.cataseek-position-left {
     position: fixed;
     bottom: 30px;
@@ -20,7 +20,6 @@
     z-index: 9999;
     padding: 0;
 }
-
 #cataseek-search-container.cataseek-position-right {
     position: fixed;
     bottom: 30px;
@@ -28,7 +27,6 @@
     z-index: 9999;
     padding: 0;
 }
-
 /* Floating styles (FAB) only apply to left/right */
 .cataseek-position-left .cataseek-search-btn.cataseek-icon-only,
 .cataseek-position-right .cataseek-search-btn.cataseek-icon-only {
@@ -40,19 +38,16 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     transition: all 0.2s;
 }
-
 .cataseek-position-left .cataseek-search-btn.cataseek-icon-only:hover,
 .cataseek-position-right .cataseek-search-btn.cataseek-icon-only:hover {
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
     transform: translateY(-2px);
 }
-
 /* Header style - simple icon, no background */
 .cataseek-position-header .cataseek-search-btn {
     padding: 8px;
     border-radius: 4px;
 }
-
 .cataseek-position-header .cataseek-search-btn:hover {
     background: rgba(0, 0, 0, 0.05);
 }
@@ -69,15 +64,12 @@
     font-weight: 500;
     transition: all 0.2s;
 }
-
 .cataseek-search-btn:hover {
     opacity: 0.8;
 }
-
 .cataseek-search-text {
     color: inherit;
 }
-
 /* === Modal Structure === */
 .cataseek-modal {
     position: fixed;
@@ -87,7 +79,6 @@
     height: 100vh;
     z-index: 99999;
 }
-
 .cataseek-modal-overlay {
     position: absolute;
     top: 0;
@@ -97,7 +88,6 @@
     background: #fff;
     transition: opacity 0.3s;
 }
-
 /* Base content is fullscreen for 'large'/full */
 .cataseek-modal-content {
     position: relative;
@@ -110,12 +100,10 @@
     display: flex;
     flex-direction: column;
 }
-
 .cataseek-modal-active .cataseek-modal-content {
     opacity: 1;
     transform: scale(1) translateY(0);
 }
-
 /* Medium Modal size */
 .cataseek-modal-medium .cataseek-modal-content {
     width: 90%;
@@ -126,7 +114,6 @@
     border-radius: 16px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
-
 /* Small Modal size */
 .cataseek-modal-small .cataseek-modal-content {
     width: 80%;
@@ -137,39 +124,32 @@
     border-radius: 16px;
     box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
-
 /* For non-fullscreen modals, center them */
 .cataseek-modal:not(.cataseek-modal-large) {
     display: flex;
     align-items: center;
     justify-content: center;
 }
-
 .cataseek-modal:not(.cataseek-modal-large) .cataseek-modal-overlay {
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(4px);
 }
-
 /* === Modal Header === */
 .cataseek-modal-header {
     display: flex;
     align-items: center;
     padding: 20px 40px;
-    border-bottom: 1px solid #eee;
     gap: 30px;
     background: #fff;
     z-index: 10;
 }
-
 .cataseek-logo-wrapper {
     flex-shrink: 0;
 }
-
 .cataseek-logo {
     max-height: 40px;
     width: auto;
 }
-
 .cataseek-search-input-wrapper {
     flex: 1;
     max-width: 900px;
@@ -186,8 +166,8 @@
 .cataseek-search-icon {
     color: #999;
     margin-right: 12px;
+    flex-shrink: 0;
 }
-
 .cataseek-search-input {
     border: none !important;
     background: transparent !important;
@@ -197,8 +177,103 @@
     padding: 0 !important;
     flex: 1;
     color: #333;
+    caret-color: var(--cataseek-color);
 }
 
+/* ─── Suggestions Bar — sits between the modal header and the modal body ─── */
+.cataseek-suggestions-bar {
+    padding: 8px 40px;
+    border-bottom: 1px solid #eee;
+    background: #fff;
+    /* flex row so the pills container stretches to full width */
+    display: flex;
+    align-items: center;
+}
+/* ─── Pill Scroll Container ─── */
+.cataseek-suggestions-pills {
+    flex: 1;              /* fill the full width of the suggestions bar */
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    /* Hide scrollbars cross-browser */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.cataseek-suggestions-pills::-webkit-scrollbar {
+    display: none;
+}
+/* ─── Individual Pill ─── */
+.cataseek-suggestion-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 1px;
+    border: 1px solid #d0d0d0;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 13px;
+    line-height: 1.4;
+    white-space: nowrap;
+    cursor: pointer;
+    background: #fafafa;
+    color: #222;
+    transition: background 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.cataseek-suggestion-pill:hover {
+    background: #f0f0f0;
+    border-color: #aaa;
+}
+/* Bold prefix = matched characters */
+.cataseek-pill-bold {
+    font-weight: 700;
+}
+/* Light suffix = predicted continuation */
+.cataseek-pill-light {
+    font-weight: 400;
+    color: #555;
+}
+/* Delete button (recent searches only) */
+.cataseek-pill-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #ddd;
+    color: #555;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.15s;
+    border: none;
+    padding: 0;
+}
+.cataseek-pill-delete:hover {
+    background: #bbb;
+    color: #111;
+}
+/* ─── Responsive: reduce visible pill count as screen shrinks ─── */
+/* Technique: set a --cataseek-pill-max-w CSS var, pills with index > threshold
+   get display:none via nth-child hiding. We use a JS helper to add a class
+   to the pills container instead (cleaner than nth-child limits). */
+.cataseek-suggestions-pills.cataseek-pills-4 .cataseek-suggestion-pill:nth-child(n+5),
+.cataseek-suggestions-pills.cataseek-pills-3 .cataseek-suggestion-pill:nth-child(n+4),
+.cataseek-suggestions-pills.cataseek-pills-2 .cataseek-suggestion-pill:nth-child(n+3) {
+    display: none;
+}
 .cataseek-close-btn {
     background: none;
     border: none;
@@ -210,11 +285,39 @@
     display: flex;
     align-items: center;
 }
-
 .cataseek-close-btn:hover {
     color: #000;
 }
-
+/* === Voice Search Button === */
+.cataseek-voice-btn {
+    background: none;
+    border: none;
+    padding: 6px;
+    cursor: pointer;
+    color: #999;
+    margin-left: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    width: 34px;
+    height: 34px;
+    flex-shrink: 0;
+    transition: color 0.2s, background 0.2s;
+}
+.cataseek-voice-btn:hover {
+    color: var(--cataseek-color);
+    background: rgba(79, 70, 229, 0.08);
+}
+.cataseek-voice-btn.cataseek-voice-active {
+    color: #ef4444;
+    animation: cataseek-voice-pulse 1.2s ease-in-out infinite;
+}
+@keyframes cataseek-voice-pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); background: rgba(239, 68, 68, 0.08); }
+    70%  { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); background: rgba(239, 68, 68, 0.12); }
+    100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); background: rgba(239, 68, 68, 0.08); }
+}
 /* === Body Layout === */
 .cataseek-modal-body {
     flex: 1;
@@ -222,13 +325,11 @@
     flex-direction: column;
     overflow: hidden;
 }
-
 .cataseek-modal-main {
     display: flex;
     flex: 1;
     overflow: hidden;
 }
-
 .cataseek-filters {
     width: 280px;
     border-right: 1px solid #eee;
@@ -237,25 +338,21 @@
     background: #fff;
     flex-shrink: 0;
 }
-
 .cataseek-content-area {
     flex: 1;
     padding: 30px 40px;
     overflow-y: auto;
     background: #fff;
 }
-
 /* === Filter Styles === */
 .cataseek-filter-group {
     margin-bottom: 30px;
 }
-
 .cataseek-filters-header-actions {
     display: flex;
     justify-content: flex-end;
     margin-bottom: 20px;
 }
-
 .cataseek-clear-filters-btn {
     background: none;
     border: none;
@@ -269,38 +366,33 @@
 .cataseek-clear-filters-btn:hover {
     opacity: 0.8;
 }
-
 .cataseek-filter-title {
     font-size: 15px;
     font-weight: 700;
     color: #333;
     margin-bottom: 20px;
 }
-
 .cataseek-filter-list {
     list-style: none;
     padding: 0;
     margin: 0;
 }
-
 .cataseek-filter-item {
     margin-bottom: 12px;
 }
-
 .cataseek-filter-label {
     display: flex;
     align-items: center;
+    text-align: left;
     gap: 12px;
     cursor: pointer;
     font-size: 14px;
     color: #555;
     transition: color 0.2s;
 }
-
 .cataseek-filter-label:hover {
     color: var(--cataseek-color);
 }
-
 .cataseek-filter-checkbox {
     width: 18px;
     height: 18px;
@@ -310,7 +402,6 @@
     cursor: pointer;
     background: #fff;
 }
-
 .cataseek-filter-checkbox:checked {
     background: #fff;
     border-color: #333;
@@ -319,24 +410,20 @@
     background-position: center;
     background-repeat: no-repeat;
 }
-
 .cataseek-filter-count {
     margin-left: auto;
     font-size: 13px;
     color: #999;
 }
-
 /* === Price Slider === */
 .cataseek-price-slider-container {
     margin-top: 15px;
 }
-
 .cataseek-price-range-inputs {
     display: flex;
     justify-content: space-between;
     margin-bottom: 10px;
 }
-
 .cataseek-price-input-box {
     background: var(--cataseek-orange);
     color: #fff;
@@ -345,7 +432,6 @@
     font-size: 13px;
     font-weight: 700;
 }
-
 .cataseek-slider-track {
     position: relative;
     width: 100%;
@@ -354,14 +440,12 @@
     border-radius: 3px;
     margin: 25px 0;
 }
-
 .cataseek-slider-range {
     position: absolute;
     height: 100%;
     background: var(--cataseek-orange);
     border-radius: 3px;
 }
-
 .cataseek-slider-handle {
     position: absolute;
     top: 50%;
@@ -375,14 +459,12 @@
     z-index: 2;
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
-
 .cataseek-slider-labels {
     display: flex;
     justify-content: space-between;
     font-size: 12px;
     color: #999;
 }
-
 .cataseek-discovery-title {
     font-size: 18px;
     font-weight: 600;
@@ -392,7 +474,6 @@
     align-items: center;
     gap: 10px;
 }
-
 /* === Results Header === */
 .cataseek-results-header {
     display: flex;
@@ -400,24 +481,20 @@
     align-items: center;
     margin-bottom: 30px;
 }
-
 .cataseek-results-count {
     font-size: 16px;
     color: #333;
     font-weight: 500;
 }
-
 .cataseek-sorting {
     display: flex;
     align-items: center;
     gap: 12px;
 }
-
 .cataseek-sorting label {
     font-size: 14px;
     color: #666;
 }
-
 .cataseek-sorting select {
     border: 1px solid #ddd;
     border-radius: 6px;
@@ -425,14 +502,12 @@
     font-size: 14px;
     background: #fff;
 }
-
 /* === Products Grid === */
 .cataseek-products-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 30px;
 }
-
 .cataseek-product-item {
     background: #fff;
     border: 1px solid #f0f0f0;
@@ -442,25 +517,21 @@
     display: flex;
     flex-direction: column;
 }
-
 .cataseek-product-image {
     aspect-ratio: 1;
     margin-bottom: 20px;
     overflow: hidden;
 }
-
 .cataseek-product-image img {
     width: 100%;
     height: 100%;
     object-fit: contain;
 }
-
 .cataseek-product-info {
     flex: 1;
     display: flex;
     flex-direction: column;
 }
-
 .cataseek-product-name {
     font-size: 14px;
     color: #333;
@@ -470,20 +541,17 @@
     overflow: hidden;
     text-transform: uppercase;
 }
-
 .cataseek-product-price {
     display: flex;
     justify-content: space-between;
     align-items: center;
     margin-top: auto;
 }
-
 .cataseek-price-current {
     font-size: 18px;
     font-weight: 700;
     color: #000;
 }
-
 .cataseek-add-to-cart {
     background: var(--cataseek-orange);
     color: #fff;
@@ -497,17 +565,14 @@
     justify-content: center;
     transition: background 0.2s;
 }
-
 .cataseek-add-to-cart:hover {
     background: var(--cataseek-color-dark);
 }
-
 .cataseek-add-to-cart--done {
     background: #22c55e;
     opacity: 0.85;
     cursor: default;
 }
-
 /* === Quantity Stepper (replaces cart button on click) === */
 .cataseek-qty-wrapper {
     display: flex;
@@ -515,7 +580,6 @@
     gap: 3px;
     animation: cataseek-fade-in 0.15s ease;
 }
-
 .cataseek-qty-step {
     background: #f0f0f0;
     border: none;
@@ -533,11 +597,9 @@
     flex-shrink: 0;
     padding: 0;
 }
-
 .cataseek-qty-step:hover {
     background: #e0e0e0;
 }
-
 .cataseek-qty-input {
     width: 36px;
     height: 30px;
@@ -549,12 +611,10 @@
     appearance: textfield;
     padding: 0;
 }
-
 .cataseek-qty-input::-webkit-inner-spin-button,
 .cataseek-qty-input::-webkit-outer-spin-button {
     -webkit-appearance: none;
 }
-
 .cataseek-qty-confirm {
     background: var(--cataseek-orange);
     color: #fff;
@@ -568,16 +628,13 @@
     transition: background 0.15s, opacity 0.15s;
     white-space: nowrap;
 }
-
 .cataseek-qty-confirm:hover {
     background: var(--cataseek-color-dark);
 }
-
 .cataseek-qty-confirm:disabled {
     opacity: 0.6;
     cursor: wait;
 }
-
 /* === Cart Toast === */
 .cataseek-cart-toast {
     position: absolute;
@@ -594,22 +651,18 @@
     white-space: nowrap;
     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
-
 .cataseek-cart-toast--success {
     background: #22c55e;
     color: #fff;
 }
-
 .cataseek-cart-toast--error {
     background: #ef4444;
     color: #fff;
 }
-
 @keyframes cataseek-toast-in {
     from { opacity: 0; transform: translateX(-50%) translateY(8px); }
     to   { opacity: 1; transform: translateX(-50%) translateY(0);   }
 }
-
 /* === Skeleton Loaders === */
 .cataseek-skeleton {
     background: #f8f8f8;
@@ -618,61 +671,50 @@
     animation: cataseek-shimmer 1.5s infinite;
     border-radius: 4px;
 }
-
 @keyframes cataseek-shimmer {
     0% {
         background-position: 200% 0;
     }
-
     100% {
         background-position: -200% 0;
     }
 }
-
 .cataseek-skeleton-image {
     width: 100%;
     padding-top: 100%;
     margin-bottom: 20px;
 }
-
 .cataseek-skeleton-text {
     height: 16px;
     margin-bottom: 10px;
     width: 90%;
 }
-
 .cataseek-skeleton-price {
     height: 24px;
     width: 40%;
 }
-
 /* === Scrollbar === */
 .cataseek-filters::-webkit-scrollbar,
 .cataseek-content-area::-webkit-scrollbar {
     width: 6px;
 }
-
 .cataseek-filters::-webkit-scrollbar-thumb,
 .cataseek-content-area::-webkit-scrollbar-thumb {
     background: #eee;
     border-radius: 3px;
 }
-
 /* === Mobile-only controls (hidden by default, shown only on mobile) === */
 #cataseek-mobile-filter-btn {
     display: none;
 }
-
 #cataseek-filter-close-btn {
     display: none;
 }
-
 /* === Responsive === */
 @media (max-width: 768px) {
     .cataseek-modal-main {
         flex-direction: column;
     }
-
     .cataseek-filters {
         position: fixed;
         top: 0;
@@ -690,12 +732,10 @@
         display: block !important;
         overflow-y: auto;
     }
-
     .cataseek-filters.cataseek-filters-open {
         transform: translateX(0);
         box-shadow: -5px 0 25px rgba(0,0,0,0.1);
     }
-
     .cataseek-filter-overlay {
         position: fixed;
         inset: 0;
@@ -703,11 +743,9 @@
         z-index: 99999;
         display: none !important;
     }
-
     .cataseek-filter-overlay.cataseek-filters-open {
         display: block !important;
     }
-
     .cataseek-mobile-filter-btn {
         display: none; /* JS will toggle to flex when filters available */
         position: fixed;
@@ -725,7 +763,6 @@
         justify-content: center;
         cursor: pointer;
     }
-
     .cataseek-mobile-filter-close {
         display: block; /* Visible inside mobile filter panel */
         position: absolute;
@@ -737,11 +774,9 @@
         padding: 5px;
         cursor: pointer;
     }
-
     .cataseek-logo-wrapper {
         display: none;
     }
-
     .cataseek-modal-header {
         padding: 15px 20px;
         gap: 10px;

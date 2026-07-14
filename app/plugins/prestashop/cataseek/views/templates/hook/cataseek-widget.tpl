@@ -1,10 +1,17 @@
-{* Cataseek Search Widget *}
-{* Only show our own icon when no custom selector is configured *}
+{*
+ * Cataseek - AI-Powered Search SaaS for PrestaShop
+ *
+ * @author    gofenice
+ * @copyright 2026 gofenice
+ * @license   Commercial
+ * @version   1.0.0
+ *}
+
 {if !$custom_selector}
-<div id="cataseek-search-container" class="cataseek-position-{$icon_position|lower}">
-    <button id="cataseek-search-trigger" class="cataseek-search-btn cataseek-icon-only" 
+<div id="cataseek-search-container" class="cataseek-position-{$icon_position|escape:'html':'UTF-8'|lower}">
+    <button id="cataseek-search-trigger" class="cataseek-search-btn cataseek-icon-only"
             aria-label="{l s='Open AI Search' mod='cataseek'}"
-            style="color: {$icon_color};">
+            style="color: {$icon_color|escape:'html':'UTF-8'};">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="11" cy="11" r="8"></circle>
             <path d="m21 21-4.35-4.35"></path>
@@ -17,28 +24,36 @@
 {/if}
 
 {* Search Modal *}
-<div id="cataseek-modal" class="cataseek-modal cataseek-modal-{$modal_size|lower}" style="display: none;">
+<div id="cataseek-modal" class="cataseek-modal cataseek-modal-{$modal_size|escape:'html':'UTF-8'|lower}" style="display: none;">
     <div class="cataseek-modal-overlay"></div>
     <div class="cataseek-modal-content">
         <div class="cataseek-modal-header">
             {if isset($shop_logo) && $shop_logo}
                 <div class="cataseek-logo-wrapper">
-                    <img src="{$shop_logo}" alt="Logo" class="cataseek-logo" />
+                    <img src="{$shop_logo|escape:'html':'UTF-8'}" alt="Logo" class="cataseek-logo" />
                 </div>
             {/if}
-            
+
             <div class="cataseek-search-input-wrapper">
                 <svg class="cataseek-search-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="11" cy="11" r="8"></circle>
                     <path d="m21 21-4.35-4.35"></path>
                 </svg>
-                <input 
-                    type="text" 
-                    id="cataseek-search-input" 
-                    class="cataseek-search-input" 
+                <input
+                    type="text"
+                    id="cataseek-search-input"
+                    class="cataseek-search-input"
                     placeholder="{l s='Search for products...' mod='cataseek'}"
                     autocomplete="off"
+                    spellcheck="false"
                 />
+                <button id="cataseek-voice-search-btn" class="cataseek-voice-btn" type="button" aria-label="{l s='Voice Search' mod='cataseek'}" style="display: none;" title="{l s='Search by voice' mod='cataseek'}">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                        <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                        <line x1="12" y1="19" x2="12" y2="22"></line>
+                    </svg>
+                </button>
                 <button id="cataseek-modal-close" class="cataseek-close-btn" aria-label="{l s='Close' mod='cataseek'}">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -48,13 +63,18 @@
             </div>
         </div>
 
+        {* Suggestion pills — between header and body, stacks below the search row *}
+        <div id="cataseek-suggestions-bar" class="cataseek-suggestions-bar" style="display:none;">
+            <div id="cataseek-suggestions-pills" class="cataseek-suggestions-pills"></div>
+        </div>
+
         <div class="cataseek-modal-body">
             <div class="cataseek-modal-main">
                 <div class="cataseek-filter-overlay" id="cataseek-filter-overlay" style="display: none;"></div>
                 <aside id="cataseek-filters" class="cataseek-filters" style="display: none;">
                     {* Filter content will be injected by JS *}
                 </aside>
-                
+
                 <div class="cataseek-content-area">
                     <div class="cataseek-results-header">
                         <span id="cataseek-results-count" class="cataseek-results-count"></span>
@@ -118,7 +138,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div class="cataseek-modal-footer">
             <span class="cataseek-powered">
                 {l s='Powered by' mod='cataseek'} <strong>Cataseek AI</strong>

@@ -1,3 +1,12 @@
+{**
+ * Cataseek - AI-Powered Search SaaS for PrestaShop
+ *
+ * @author    gofenice
+ * @copyright 2026 gofenice
+ * @license   Commercial
+ * @version   1.0.0
+ *}
+
 <div class="cataseek-admin-tabs" style="margin-bottom: 20px;">
     <ul class="nav nav-tabs" role="tablist">
         <li class="active" style="cursor: pointer;"><a href="#cataseek-config" role="tab" data-toggle="tab"><i class="icon-cogs"></i> {l s='Cataseek AI Search Configuration' mod='cataseek'}</a></li>
@@ -7,7 +16,7 @@
     <div class="tab-content" style="margin-top: 15px;">
         <!-- Config Tab -->
         <div class="tab-pane active" id="cataseek-config">
-            {$form_html}
+            <!-- CATASEEK_FORM_HTML_PLACEHOLDER -->
         </div>
 
         <!-- Sync Tab -->
@@ -17,23 +26,23 @@
                     <div class="row">
                         <div class="col-md-8">
                             <p>{l s='Synchronize all products from your catalog to Cataseek. This process will run in batches to avoid timeouts.' mod='cataseek'}</p>
-                            
+
                             <div id="sync-status" class="alert" style="display:none; margin-top: 15px;">
                                 <span id="sync-message"></span>
                             </div>
-                            
+
                             <div class="progress" id="sync-progress" style="display:none; margin-top: 15px;">
-                                <div class="progress-bar progress-bar-striped active" role="progressbar" 
+                                <div class="progress-bar progress-bar-striped active" role="progressbar"
                                      aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%">
                                     <span class="sr-only">0% Complete</span>
                                 </div>
                             </div>
-                            
+
                             <div style="margin-top: 15px;">
                                 <button type="button" class="btn btn-primary btn-lg" id="btn-test-connection">
                                     <i class="icon-plug"></i> {l s='Test API Connection' mod='cataseek'}
                                 </button>
-                                
+
                                 <button type="button" class="btn btn-success btn-lg" id="btn-bulk-sync">
                                     <i class="icon-refresh"></i> {l s='Start Bulk Sync' mod='cataseek'}
                                 </button>
@@ -67,7 +76,7 @@ $(document).ready(function() {
     $('#btn-test-connection').click(function() {
         var btn = $(this);
         btn.prop('disabled', true);
-        btn.html('<i class="icon-spinner icon-spin"></i> {l s='Testing...' mod='cataseek'}');
+        btn.html('<i class="icon-spinner icon-spin"></i> {l s='Testing...' mod='cataseek' js=1}');
 
         $.ajax({
             url: ajaxUrl,
@@ -84,16 +93,16 @@ $(document).ready(function() {
                     showSyncStatus(data.success ? 'success' : 'danger', data.message);
                 } catch (e) {
                     console.error('Invalid JSON response in Connection Test:', response);
-                    showSyncStatus('danger', '{l s='Invalid server response during connection test' mod='cataseek'}');
+                    showSyncStatus('danger', '{l s='Invalid server response during connection test' mod='cataseek' js=1}');
                 }
                 btn.prop('disabled', false);
-                btn.html('<i class="icon-plug"></i> {l s='Test API Connection' mod='cataseek'}');
+                btn.html('<i class="icon-plug"></i> {l s='Test API Connection' mod='cataseek' js=1}');
             },
             error: function(xhr, status, error) {
                 console.error('Cataseek Connection Test Error:', status, error, xhr.responseText);
-                showSyncStatus('danger', '{l s='Connection test failed: ' mod='cataseek'}' + error);
+                showSyncStatus('danger', '{l s='Connection test failed: ' mod='cataseek' js=1}' + error);
                 btn.prop('disabled', false);
-                btn.html('<i class="icon-plug"></i> {l s='Test API Connection' mod='cataseek'}');
+                btn.html('<i class="icon-plug"></i> {l s='Test API Connection' mod='cataseek' js=1}');
             }
         });
     });
@@ -131,7 +140,7 @@ $(document).ready(function() {
             return;
         }
 
-        if (!confirm('{l s='Are you sure you want to start the bulk sync? This may take several minutes.' mod='cataseek'}')) {
+        if (!confirm('{l s='Are you sure you want to start the bulk sync? This may take several minutes.' mod='cataseek' js=1}')) {
             return;
         }
 
@@ -139,8 +148,8 @@ $(document).ready(function() {
         syncedProducts = 0;
         $(this).prop('disabled', true);
         $('#sync-progress').show();
-        $('#sync-status-text').text('{l s='Syncing...' mod='cataseek'}');
-        
+        $('#sync-status-text').text('{l s='Syncing...' mod='cataseek' js=1}');
+
         syncBatch(0);
     });
 
@@ -160,20 +169,20 @@ $(document).ready(function() {
                     data = JSON.parse(response);
                 } catch (e) {
                     console.error('Invalid JSON response:', response);
-                    completeSyncProcess(false, '{l s='Invalid server response during sync' mod='cataseek'}');
+                    completeSyncProcess(false, '{l s='Invalid server response during sync' mod='cataseek' js=1}');
                     return;
                 }
-                
+
                 if (data.success) {
                     syncedProducts += data.count;
                     $('#synced-products').text(syncedProducts);
-                    
+
                     var progress = totalProducts > 0 ? Math.round((syncedProducts / totalProducts) * 100) : 0;
                     $('.progress-bar').css('width', progress + '%').attr('aria-valuenow', progress);
                     $('.progress-bar .sr-only').text(progress + '% Complete');
-                    
+
                     showSyncStatus('info', data.message);
-                    
+
                     if (!data.finished) {
                         // Continue with next batch
                         syncBatch(data.nextOffset);
@@ -187,7 +196,7 @@ $(document).ready(function() {
             },
             error: function(xhr, status, error) {
                 console.error('Cataseek Sync Error:', status, error, xhr.responseText);
-                completeSyncProcess(false, '{l s='A network error occurred during sync: ' mod='cataseek'}' + error);
+                completeSyncProcess(false, '{l s='A network error occurred during sync: ' mod='cataseek' js=1}' + error);
             }
         });
     }
@@ -195,13 +204,13 @@ $(document).ready(function() {
     function completeSyncProcess(success, message) {
         isSyncing = false;
         $('#btn-bulk-sync').prop('disabled', false);
-        $('#sync-status-text').text(success ? '{l s='Completed' mod='cataseek'}' : '{l s='Failed' mod='cataseek'}');
-        
+        $('#sync-status-text').text(success ? '{l s='Completed' mod='cataseek' js=1}' : '{l s='Failed' mod='cataseek' js=1}');
+
         if (success) {
-            showSyncStatus('success', '{l s='Bulk sync completed successfully!' mod='cataseek'}');
+            showSyncStatus('success', '{l s='Bulk sync completed successfully!' mod='cataseek' js=1}');
             $('.progress-bar').removeClass('active');
         } else {
-            showSyncStatus('danger', message || '{l s='Sync failed' mod='cataseek'}');
+            showSyncStatus('danger', message || '{l s='Sync failed' mod='cataseek' js=1}');
         }
     }
 

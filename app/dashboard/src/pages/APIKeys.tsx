@@ -149,7 +149,7 @@ const APIKeys: React.FC = () => {
                                 value={newApiPassword}
                                 onChange={(e) => setNewApiPassword(e.target.value)}
                                 placeholder="Enter at least 8 characters"
-                                style={{ flex: 1, padding: '0.6rem', background: 'rgba(20,32,26,0.03)', border: '1px solid var(--border)', borderRadius: '4px', color: 'white' }}
+                                style={{ flex: 1, padding: '0.6rem', background: 'rgba(20,32,26,0.03)', border: '1px solid var(--border)', borderRadius: '4px', color: 'black' }}
                             />
                             <button
                                 onClick={handleGenerateKey}
