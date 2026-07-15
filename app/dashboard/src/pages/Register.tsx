@@ -19,7 +19,7 @@ const Register: React.FC = () => {
     const [loading, setLoading] = useState(false);
 
     // Legal pages live on the marketing site (main domain in production)
-    const LEGAL_BASE = import.meta.env.VITE_LEGAL_URL || 'http://localhost:8090';
+    const LEGAL_BASE = import.meta.env.VITE_LEGAL_URL || 'https://cataseek.com';
 
     const { login } = useAuth();
     const navigate = useNavigate();

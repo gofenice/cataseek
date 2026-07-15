@@ -75,7 +75,14 @@ const APIKeys: React.FC = () => {
     };
 
     if (loading) {
-        return <div className="flex-center" style={{ height: '200px' }}>Loading API Management...</div>;
+        return (
+            <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '0.75rem', color: 'var(--text-muted)' }}>
+                <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round">
+                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Loading API keys…</span>
+            </div>
+        );
     }
 
     return (

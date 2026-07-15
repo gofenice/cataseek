@@ -583,6 +583,12 @@
                     addToCart(confirmBtn);
                     return;
                 }
+                var qtyInput = e.target.closest('.cataseek-qty-input');
+                if (qtyInput) {
+                    e.preventDefault(); e.stopPropagation();
+                    // allow typing without triggering <a> navigation
+                    return;
+                }
             }, true); // capture phase so the <a> parent doesn't navigate
         }
         function expandToQuantityPicker(cartBtn) {
