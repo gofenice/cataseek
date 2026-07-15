@@ -49,11 +49,29 @@ const Plugins: React.FC = () => {
 
     if (loading) {
         return (
-            <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '0.75rem', color: 'var(--text-muted)' }}>
-                <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Loading plugins…</span>
+            <div className="skeleton-page">
+                {/* Header */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div className="skeleton" style={{ height: 28, width: 120 }} />
+                    <div className="skeleton" style={{ height: 16, width: 380, maxWidth: '80%' }} />
+                </div>
+                {/* Cards grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '1.25rem' }}>
+                    {[1, 2, 3].map(i => (
+                        <div key={i} className="card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.875rem' }}>
+                                <div className="skeleton" style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0 }} />
+                                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <div className="skeleton" style={{ height: 14, width: '60%' }} />
+                                    <div className="skeleton" style={{ height: 12, width: '80%' }} />
+                                </div>
+                            </div>
+                            <div className="skeleton" style={{ height: 12, width: '90%' }} />
+                            <div className="skeleton" style={{ height: 12, width: '70%' }} />
+                            <div className="skeleton" style={{ height: 36, borderRadius: 999 }} />
+                        </div>
+                    ))}
+                </div>
             </div>
         );
     }

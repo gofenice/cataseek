@@ -100,11 +100,43 @@ const Settings: React.FC = () => {
 
     if (loading) {
         return (
-            <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '0.75rem', color: 'var(--text-muted)' }}>
-                <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-                </svg>
-                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Loading settings…</span>
+            <div className="skeleton-page" style={{ maxWidth: 860 }}>
+                {/* Header */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div className="skeleton" style={{ height: 28, width: 180 }} />
+                    <div className="skeleton" style={{ height: 14, width: 320, maxWidth: '80%' }} />
+                </div>
+                {/* Main form card */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: '1.5rem', alignItems: 'start' }}>
+                    <div className="glass" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                        <div className="skeleton" style={{ height: 16, width: 100 }} />
+                        {/* Color pickers row */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.25rem' }}>
+                            {[1, 2].map(i => (
+                                <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <div className="skeleton" style={{ height: 12, width: 80 }} />
+                                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                                        <div className="skeleton" style={{ width: 38, height: 38, borderRadius: 8 }} />
+                                        <div className="skeleton" style={{ height: 12, width: 60 }} />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        {/* Radio rows */}
+                        {[120, 160, 140].map((w, i) => (
+                            <div key={i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <div className="skeleton" style={{ height: 12, width: 100 }} />
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    {[1, 2, 3].map(j => <div key={j} className="skeleton" style={{ height: 32, width: w / 3, borderRadius: 8 }} />)}
+                                </div>
+                            </div>
+                        ))}
+                        {/* Save button */}
+                        <div className="skeleton" style={{ height: 40, width: 120, borderRadius: 999, alignSelf: 'flex-end' }} />
+                    </div>
+                    {/* Preview panel */}
+                    <div className="skeleton" style={{ height: 260, borderRadius: 12 }} />
+                </div>
             </div>
         );
     }

@@ -286,11 +286,45 @@ const Billing: React.FC = () => {
     };
 
     if (loading) return (
-        <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '0.75rem', color: 'var(--text-muted)' }}>
-            <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Loading billing info…</span>
+        <div className="skeleton-page">
+            {/* Header */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="skeleton" style={{ height: 28, width: 160 }} />
+                <div className="skeleton" style={{ height: 14, width: 300, maxWidth: '80%' }} />
+            </div>
+            {/* Stat cards row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
+                {[1, 2, 3].map(i => (
+                    <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        <div className="skeleton" style={{ height: 12, width: 80 }} />
+                        <div className="skeleton" style={{ height: 28, width: 100 }} />
+                        <div className="skeleton" style={{ height: 6, borderRadius: 99 }} />
+                    </div>
+                ))}
+            </div>
+            {/* Plan cards grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem' }}>
+                {[1, 2, 3].map(i => (
+                    <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <div className="skeleton" style={{ height: 16, width: 90 }} />
+                        <div className="skeleton" style={{ height: 32, width: 120 }} />
+                        {[1, 2, 3].map(j => <div key={j} className="skeleton" style={{ height: 11, width: '80%' }} />)}
+                        <div className="skeleton" style={{ height: 38, borderRadius: 999 }} />
+                    </div>
+                ))}
+            </div>
+            {/* Invoice table */}
+            <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                <div className="skeleton" style={{ height: 16, width: 80 }} />
+                {[1, 2, 3].map(i => (
+                    <div key={i} style={{ display: 'flex', gap: '1rem', alignItems: 'center', paddingTop: 8 }}>
+                        <div className="skeleton" style={{ height: 12, flex: 2 }} />
+                        <div className="skeleton" style={{ height: 12, flex: 1 }} />
+                        <div className="skeleton" style={{ height: 12, flex: 1 }} />
+                        <div className="skeleton" style={{ height: 24, width: 60, borderRadius: 99 }} />
+                    </div>
+                ))}
+            </div>
         </div>
     );
 

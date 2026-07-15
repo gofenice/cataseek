@@ -275,3 +275,22 @@ input, select, textarea {
 .fade-up {
   animation: fadeUp 0.35s ease both;
 }
+
+/* Skeleton loader */
+@keyframes shimmer {
+  0%   { background-position: -600px 0; }
+  100% { background-position:  600px 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-2) 25%, #e8f0eb 50%, var(--bg-2) 75%);
+  background-size: 600px 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+
+.skeleton-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}

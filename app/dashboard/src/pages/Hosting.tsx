@@ -171,11 +171,21 @@ const Hosting: React.FC = () => {
     };
 
     if (loading) return (
-        <div className="flex-center" style={{ height: '300px', flexDirection: 'column', gap: '0.75rem', color: 'var(--text-muted)' }}>
-            <svg className="spin" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2.5" strokeLinecap="round">
-                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
-            </svg>
-            <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Loading hosting…</span>
+        <div className="skeleton-page">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="skeleton" style={{ height: 28, width: 160 }} />
+                <div className="skeleton" style={{ height: 14, width: 280, maxWidth: '80%' }} />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem' }}>
+                {[1, 2, 3].map(i => (
+                    <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <div className="skeleton" style={{ height: 16, width: 90 }} />
+                        <div className="skeleton" style={{ height: 32, width: 110 }} />
+                        {[1, 2, 3].map(j => <div key={j} className="skeleton" style={{ height: 11, width: '75%' }} />)}
+                        <div className="skeleton" style={{ height: 38, borderRadius: 999 }} />
+                    </div>
+                ))}
+            </div>
         </div>
     );
 
