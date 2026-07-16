@@ -291,10 +291,10 @@ router.post(
         const trimmedQuery = searchQuery.trim().toLowerCase();
         const { result_count = 0 } = req.body;
 
-        if (trimmedQuery.length > 0) {
+        if (trimmedQuery.length >= 3) {
           await trackUsage(tenantId, '/products/public/search');
 
-          if (trimmedQuery.length >= 3) {
+
             await query(
               `CREATE TABLE IF NOT EXISTS search_analytics (
                 id           BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -320,7 +320,6 @@ router.post(
                VALUES (?, ?, ?, ?)`,
               [tenantId, trimmedQuery, result_count, language || 'en']
             ).catch(() => {});
-          }
         }
         return res.json({ counted: true });
       }
