@@ -426,6 +426,9 @@ class Cataseek extends Module
                 'storeId' => (string) $this->context->shop->id,
                 'shopDomain' => $this->getStoreDomain(),
                 'trendingTitle' => $this->l('Trending Products'),
+                'labelPrice' => $this->l('Price'),
+                'labelCategories' => $this->l('Categories'),
+                'labelClearAll' => $this->l('Clear all filters'),
             ],
         ]);
 

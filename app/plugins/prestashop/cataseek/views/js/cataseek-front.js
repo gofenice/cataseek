@@ -911,8 +911,8 @@
         html += '<div class="cataseek-filters-header-actions">';
         html +=
           '<button id="cataseek-clear-filters-btn" class="cataseek-clear-filters-btn">' +
-          (config.language === "es" ? "Limpiar filtros" : "Clear all filters") +
-          "</button>";
+          (config.labelClearAll || 'Clear all filters') +
+          '</button>';
         html += "</div>";
       }
       // Categories
@@ -925,7 +925,7 @@
           hasFilters = true;
           html +=
             '<div class="cataseek-filter-group">' +
-            '<div class="cataseek-filter-title">Categorias</div>' +
+            '<div class="cataseek-filter-title">' + (config.labelCategories || 'Categories') + '</div>' +
             '<ul class="cataseek-filter-list">' +
             keys
               .map(function (cat) {
@@ -971,7 +971,7 @@
             : state.priceRange.max;
         html +=
           '<div class="cataseek-filter-group">' +
-          '<div class="cataseek-filter-title">Precio</div>' +
+          '<div class="cataseek-filter-title">' + (config.labelPrice || 'Price') + '</div>' +
           '<div class="cataseek-price-slider-container">' +
           '<div class="cataseek-price-range-inputs">' +
           '<span class="cataseek-price-input-box">' +
