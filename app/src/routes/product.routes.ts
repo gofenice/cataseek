@@ -344,15 +344,66 @@ router.post(
         }
       );
 
+      // ── Generate lightweight suggestions from product names ──
+      // Run a second cheap search (names only, no facets, limit 10) to extract
+      // predictive word completions. This reuses the same Meilisearch index with
+      // no schema changes and adds negligible latency (~1–3ms).
+      let suggestions: string[] = [];
+      if (searchQuery && searchQuery.trim().length >= 2) {
+        try {
+          const suggResults = await searchProducts(
+            indexName,
+            searchQuery,
+            { language, storeId: store_id },
+            { limit: 10, attributesToRetrieve: ['name'] }
+          );
+
+          const queryLower = searchQuery.trim().toLowerCase();
+          const seen = new Set<string>();
+
+          suggResults.hits.forEach((hit: any) => {
+            if (!hit.name) return;
+            // Split name into words, find ones that start with the typed query
+            const words = hit.name.toLowerCase().split(/\s+/);
+            words.forEach((word: string) => {
+              if (word.startsWith(queryLower) && word !== queryLower && word.length > queryLower.length) {
+                if (!seen.has(word)) {
+                  seen.add(word);
+                  suggestions.push(word);
+                }
+              }
+            });
+            // Also offer the full product name if it starts with or contains the query
+            const nameLower = hit.name.toLowerCase();
+            if (nameLower.startsWith(queryLower) && nameLower !== queryLower) {
+              if (!seen.has(nameLower)) {
+                seen.add(nameLower);
+                suggestions.push(hit.name.toLowerCase());
+              }
+            }
+          });
+
+          // Cap at 6 suggestions, prioritise shorter (more generic) completions
+          suggestions = suggestions
+            .sort((a, b) => a.length - b.length)
+            .slice(0, 6);
+        } catch (_) {
+          // Suggestions are non-critical — never fail the main search
+          suggestions = [];
+        }
+      }
+
       res.json({
         results: results.hits,
         total: results.estimatedTotalHits,
         facetDistribution: results.facetDistribution,
         facetStats: results.facetStats,
         processingTime: results.processingTimeMs,
+        suggestions,
         limit,
         offset
       });
+
     } catch (error) {
       console.error('Public search error:', error);
       res.status(500).json({ error: 'Search failed' });

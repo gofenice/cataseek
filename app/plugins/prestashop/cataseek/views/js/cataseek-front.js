@@ -15,6 +15,7 @@
     var currency = config.currency || "$";
     var trendingTitle = config.trendingTitle || "Trending Products";
     var cachedDiscoveryHtml = null;
+    var preSearchHash = ''; // hash fragment that existed before cataseek took over
     var isFetchingDiscovery = false;
     // --- State ---
     var state = {
@@ -72,6 +73,11 @@
     }
 
     function fireDwellCount(q) {
+      // Commit to browser history and recent searches only after the user
+      // has settled on results for 5s — prevents partial queries polluting both.
+      pushSearchState();
+      saveRecentSearch(q);
+
       var domain = config.shopDomain || window.location.hostname;
       var payload = { query: q, count_only: true, result_count: state.total };
       if (config.language) payload.language = config.language;
@@ -299,7 +305,7 @@
         if (e.key === "Enter") {
           var q = searchInput.value.trim();
           if (q.length >= minChars) {
-            saveRecentSearch(q);
+            // saveRecentSearch deferred to dwell timer — only save if user stays 5s
             hideSuggestions();
             startNewSearch(q);
           }
@@ -468,6 +474,10 @@
     }
     // --- Modal Logic ---
     function openModal() {
+      // Capture the hash that existed before cataseek takes over (e.g. a theme anchor)
+      if (!preSearchHash && location.hash && location.hash.indexOf('cataseek-') === -1) {
+        preSearchHash = location.hash.replace(/^#/, '');
+      }
       modal.style.display = "block";
       requestAnimationFrame(function () {
         requestAnimationFrame(function () {
@@ -476,7 +486,22 @@
       });
       if (searchInput) searchInput.focus();
       document.body.style.overflow = "hidden";
-      if (!searchInput || searchInput.value.trim().length < minChars) {
+      // Restore from URL if page loaded with a cataseek hash (shared link / deep link)
+      var urlState = readSearchState();
+      if (urlState && urlState.q && urlState.q.length >= minChars) {
+        state.query = urlState.q;
+        state.sort  = urlState.sort;
+        state.selectedFilters.categories = urlState.cats;
+        state.priceRange.currentMin = urlState.pmin;
+        state.priceRange.currentMax = urlState.pmax;
+        state.offset = 0;
+        state.hasMore = true;
+        state.dwellFiredForQuery = null;
+        if (searchInput) searchInput.value = state.query;
+        if (sortSelect)  sortSelect.value  = state.sort;
+        showSkeletons();
+        performSearch();
+      } else if (!searchInput || searchInput.value.trim().length < minChars) {
         showDiscoveryState();
         // Show recent searches as suggestion pills immediately
         renderRecentPills();
@@ -489,6 +514,7 @@
     }
     function closeModal() {
       cancelDwellTimer(); // never count a search the user abandoned by closing
+      clearSearchState(); // restore the pre-cataseek URL hash
       modal.classList.remove("cataseek-modal-active");
       closeMobileFilters();
       setTimeout(function () {
@@ -514,6 +540,10 @@
         state.selectedFilters.categories = [];
         state.priceRange.currentMin = null;
         state.priceRange.currentMax = null;
+        // Note: pushSearchState() is intentionally NOT called here.
+        // replaceSearchState() in performSearch() keeps the URL hash in sync so
+        // the link is always shareable, but a new Back-button history entry is
+        // only created when the dwell timer fires (5s of settled results).
         showSkeletons();
         performSearch();
     }
@@ -536,6 +566,8 @@
       performSearch(true);
     }
     function performSearch(isLoadMore) {
+      // Keep URL hash in sync with the current filters/sort (uses replaceState — no new history entry)
+      if (!isLoadMore) replaceSearchState();
       if (!isLoadMore) state.isLoading = true;
       var domain = config.shopDomain || window.location.hostname;
       var sortArr = [];
@@ -605,9 +637,9 @@
             // Use suggestions bundled in the search response (no separate /suggestions call)
             if (data.suggestions && data.suggestions.length > 0) {
               renderSuggestionPills(data.suggestions, state.query);
-            } else {
-              hideSuggestions();
             }
+            // If no suggestions returned, leave whatever is currently showing
+            // (e.g. recent searches shown on modal open) — don't wipe it.
             // Start the dwell timer — fires count_only after 5s of stable results
             if (state.query) startDwellTimer(state.query);
           }
@@ -1406,12 +1438,123 @@
           var q = pill.getAttribute("data-query");
           if (q) {
             if (searchInput) searchInput.value = q;
-            saveRecentSearch(q); // explicit commit
+            // saveRecentSearch deferred to dwell timer — only save if user stays 5s
             hideSuggestions();
             startNewSearch(q);
           }
         }
       });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // URL HASH STATE MANAGEMENT
+    // Encodes the active search state into location.hash so the
+    // browser Back / Forward buttons navigate between searches.
+    // All params are prefixed "cataseek-" to avoid hash collisions
+    // with PrestaShop themes that already use anchor navigation.
+    // ═══════════════════════════════════════════════════════════
+
+    // Build the cataseek hash string from the current state
+    function buildHashString() {
+      var params = [];
+      if (state.query) {
+        params.push('cataseek-q=' + encodeURIComponent(state.query));
+      }
+      if (state.sort && state.sort !== 'relevance') {
+        params.push('cataseek-sort=' + encodeURIComponent(state.sort));
+      }
+      if (state.selectedFilters.categories && state.selectedFilters.categories.length > 0) {
+        params.push('cataseek-cats=' + encodeURIComponent(state.selectedFilters.categories.join(',')));
+      }
+      if (state.priceRange.currentMin !== null) {
+        params.push('cataseek-pmin=' + state.priceRange.currentMin);
+      }
+      if (state.priceRange.currentMax !== null) {
+        params.push('cataseek-pmax=' + state.priceRange.currentMax);
+      }
+      return params.join('&');
+    }
+
+    // Push a NEW browser history entry — called when the user commits a new query
+    function pushSearchState() {
+      if (!state.query) return;
+      history.pushState({ cataseek: true }, '', '#' + buildHashString());
+    }
+
+    // REPLACE the current history entry — called when filters/sort change on an existing query
+    function replaceSearchState() {
+      if (!state.query) return;
+      history.replaceState({ cataseek: true }, '', '#' + buildHashString());
+    }
+
+    // Parse location.hash and return the cataseek search state, or null if not present
+    function readSearchState() {
+      var hash = location.hash;
+      if (!hash || hash.indexOf('cataseek-q=') === -1) return null;
+      var raw = hash.replace(/^#/, '');
+      var result = {};
+      raw.split('&').forEach(function (pair) {
+        var idx = pair.indexOf('=');
+        if (idx < 0) return;
+        result[pair.slice(0, idx)] = decodeURIComponent(pair.slice(idx + 1).replace(/\+/g, ' '));
+      });
+      return {
+        q:    result['cataseek-q'] || '',
+        sort: result['cataseek-sort'] || 'relevance',
+        cats: result['cataseek-cats'] ? result['cataseek-cats'].split(',').filter(Boolean) : [],
+        pmin: result['cataseek-pmin'] !== undefined ? parseFloat(result['cataseek-pmin']) : null,
+        pmax: result['cataseek-pmax'] !== undefined ? parseFloat(result['cataseek-pmax']) : null,
+      };
+    }
+
+    // Remove all cataseek params from the URL, restoring any pre-search anchor
+    function clearSearchState() {
+      var target = location.pathname + location.search + (preSearchHash ? '#' + preSearchHash : '');
+      history.replaceState(null, '', target || location.pathname);
+    }
+
+    // Handle browser Back / Forward buttons
+    window.addEventListener('popstate', function () {
+      var searchState = readSearchState();
+      if (searchState && searchState.q && searchState.q.length >= minChars) {
+        // Navigated back to a cataseek search entry — restore it
+        if (!modal.classList.contains('cataseek-modal-active')) {
+          modal.style.display = 'block';
+          requestAnimationFrame(function () {
+            requestAnimationFrame(function () {
+              modal.classList.add('cataseek-modal-active');
+            });
+          });
+          document.body.style.overflow = 'hidden';
+        }
+        state.query  = searchState.q;
+        state.sort   = searchState.sort;
+        state.selectedFilters.categories = searchState.cats;
+        state.priceRange.currentMin = searchState.pmin;
+        state.priceRange.currentMax = searchState.pmax;
+        state.offset = 0;
+        state.hasMore = true;
+        state.dwellFiredForQuery = null;
+        if (searchInput) searchInput.value = state.query;
+        if (sortSelect)  sortSelect.value  = state.sort;
+        showSkeletons();
+        performSearch();
+      } else {
+        // URL has no cataseek state — close modal if open
+        if (modal.classList.contains('cataseek-modal-active')) {
+          cancelDwellTimer();
+          modal.classList.remove('cataseek-modal-active');
+          closeMobileFilters();
+          setTimeout(function () { modal.style.display = 'none'; }, 300);
+          document.body.style.overflow = '';
+        }
+      }
+    });
+
+    // Auto-open the modal on page load if a cataseek search hash is present
+    // (supports shared / bookmarked search URLs)
+    if (readSearchState()) {
+      openModal();
     }
 
     // ─── Helpers ---
