@@ -1,5 +1,7 @@
 import express from 'express';
 import { Request, Response } from 'express';
+import crypto from 'crypto';
+import { OAuth2Client } from 'google-auth-library';
 import { body, validationResult } from 'express-validator';
 import rateLimit from 'express-rate-limit';
 import { query } from '../config/database';
@@ -8,7 +10,8 @@ import { getRazorpayClient } from '../services/razorpay.service';
 import { hashPassword, comparePassword, generateToken, generateApiKey, generateIndexName } from '../utils/auth';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
 import { sendRegistrationWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../services/mailer.service';
-import { generateToken as generateAccountToken, hashToken, ensureAccountColumns } from '../services/account.service';
+import { generateToken as generateAccountToken, hashToken, ensureAccountColumns, ensureGoogleAuthColumns } from '../services/account.service';
+import { getGoogleAuthConfig } from '../services/google-auth-settings.service';
 
 const router = express.Router();
 
@@ -38,6 +41,80 @@ const passwordLimiter = rateLimit({
 });
 
 const APP_URL = () => process.env.FRONTEND_URL || 'http://localhost:3000';
+
+// ─── Host separation guard (shared by /login and /google) ─────────────────────
+// Super admins sign in only on the admin host, merchants only elsewhere
+// (no restriction when SUPERADMIN_HOST is unset, e.g. local dev).
+function checkSuperAdminHostAccess(tenant: { role: string }, req: Request): { ok: true } | { ok: false; status: number; error: string } {
+  const superAdminHost = process.env.SUPERADMIN_HOST;
+  if (!superAdminHost) return { ok: true };
+  if (tenant.role === 'admin' && req.hostname !== superAdminHost) {
+    return { ok: false, status: 403, error: `Super admin sign-in is only available at https://${superAdminHost}` };
+  }
+  if (tenant.role !== 'admin' && req.hostname === superAdminHost) {
+    return { ok: false, status: 401, error: 'Invalid credentials' };
+  }
+  return { ok: true };
+}
+
+// ─── Shared new-tenant provisioning (used by /register and /google signup) ────
+// Everything that happens after the tenants row is inserted: Meilisearch
+// index, per-tenant products table, welcome email.
+async function provisionTenant(opts: {
+  tenantId: number;
+  storeName: string;
+  storeDomain: string;
+  email: string;
+  trialEndsAt: Date;
+}) {
+  const indexName = generateIndexName(opts.tenantId);
+  await query('UPDATE tenants SET meilisearch_index_name = ? WHERE id = ?', [indexName, opts.tenantId]);
+  await createTenantIndex(indexName);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS products_${opts.tenantId} (
+      id VARCHAR(50) PRIMARY KEY,
+      external_id VARCHAR(100) NOT NULL,
+      name VARCHAR(500) NOT NULL,
+      description TEXT,
+      price DECIMAL(10, 2),
+      compare_price DECIMAL(10, 2),
+      quantity INT DEFAULT 0,
+      sku VARCHAR(100),
+      categories JSON,
+      attributes JSON,
+      images JSON,
+      language VARCHAR(10) DEFAULT 'en',
+      store_id VARCHAR(50),
+      status ENUM('active', 'inactive', 'draft') DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_external_id (external_id),
+      INDEX idx_status (status),
+      INDEX idx_language (language),
+      INDEX idx_store_id (store_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  sendRegistrationWelcomeEmail(opts.email, opts.storeName, opts.trialEndsAt)
+    .catch((e) => console.error('Welcome email error:', e));
+}
+
+// ─── Google Sign-In helpers ─────────────────────────────────────────────────────
+function slugify(input: string): string {
+  return input.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'store';
+}
+
+async function generateUniqueStoreDomain(email: string): Promise<string> {
+  const base = slugify(email.split('@')[0]);
+  for (let i = 0; i < 8; i++) {
+    const suffix = crypto.randomBytes(2).toString('hex'); // 4 hex chars
+    const candidate = `${base}-${suffix}`;
+    const existing: any = await query('SELECT id FROM tenants WHERE store_domain = ?', [candidate]);
+    if (!existing || existing.length === 0) return candidate;
+  }
+  throw new Error('Could not generate a unique store domain');
+}
 
 // Search Preview Proxy (for Dashboard)
 router.post('/preview-search', authenticateJWT, async (req: AuthRequest, res: Response) => {
@@ -142,48 +219,12 @@ router.post(
 
       const tenantId = result.insertId;
 
-      // Generate index name and update tenant
-      const indexName = generateIndexName(tenantId);
-      await query(
-        'UPDATE tenants SET meilisearch_index_name = ? WHERE id = ?',
-        [indexName, tenantId]
-      );
-
-      // Create Meilisearch index for this tenant
-      await createTenantIndex(indexName);
-
-      // Create tenant's product table
-      await query(`
-        CREATE TABLE IF NOT EXISTS products_${tenantId} (
-          id VARCHAR(50) PRIMARY KEY,
-          external_id VARCHAR(100) NOT NULL,
-          name VARCHAR(500) NOT NULL,
-          description TEXT,
-          price DECIMAL(10, 2),
-          compare_price DECIMAL(10, 2),
-          quantity INT DEFAULT 0,
-          sku VARCHAR(100),
-          categories JSON,
-          attributes JSON,
-          images JSON,
-          language VARCHAR(10) DEFAULT 'en',
-          store_id VARCHAR(50),
-          status ENUM('active', 'inactive', 'draft') DEFAULT 'active',
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          INDEX idx_external_id (external_id),
-          INDEX idx_status (status),
-          INDEX idx_language (language),
-          INDEX idx_store_id (store_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-      `);
+      await provisionTenant({ tenantId, storeName, storeDomain: storeDomain.toLowerCase(), email: email.toLowerCase(), trialEndsAt });
 
       // Generate JWT token
       const token = generateToken({ tenantId, apiKey });
 
-      // Send welcome + verification emails (fire-and-forget)
-      sendRegistrationWelcomeEmail(email, storeName, trialEndsAt)
-        .catch((e) => console.error('Welcome email error:', e));
+      // Send verification email (fire-and-forget) — welcome email is sent by provisionTenant
       const verifyUrl = `${APP_URL()}/verify-email?token=${verify.raw}&email=${encodeURIComponent(email.toLowerCase())}`;
       sendVerificationEmail(email, storeName, verifyUrl)
         .catch((e) => console.error('Verification email error:', e));
@@ -333,7 +374,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     }
 
     const rows: any = await query(
-      'SELECT id, email, password_hash, store_name, status, api_key, role FROM tenants WHERE email = ?',
+      'SELECT id, email, password_hash, store_name, store_domain, status, api_key, role FROM tenants WHERE email = ?',
       [email.toLowerCase()]
     );
 
@@ -342,6 +383,12 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
     }
 
     const tenant = rows[0];
+
+    // Google-only accounts have no password to compare against
+    if (!tenant.password_hash) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
     const bcrypt = require('bcryptjs');
     const isValidPassword = await bcrypt.compare(password, tenant.password_hash);
 
@@ -349,16 +396,9 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Host separation: super admins sign in only on the admin host,
-    // merchants only elsewhere (no restriction when SUPERADMIN_HOST is unset, e.g. local dev)
-    const superAdminHost = process.env.SUPERADMIN_HOST;
-    if (superAdminHost) {
-      if (tenant.role === 'admin' && req.hostname !== superAdminHost) {
-        return res.status(403).json({ error: `Super admin sign-in is only available at https://${superAdminHost}` });
-      }
-      if (tenant.role !== 'admin' && req.hostname === superAdminHost) {
-        return res.status(401).json({ error: 'Invalid credentials' });
-      }
+    const hostCheck = checkSuperAdminHostAccess(tenant, req);
+    if (!hostCheck.ok) {
+      return res.status(hostCheck.status).json({ error: hostCheck.error });
     }
 
     const token = generateToken({
@@ -374,6 +414,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
         id: tenant.id,
         email: tenant.email,
         storeName: tenant.store_name,
+        storeDomain: tenant.store_domain,
         status: tenant.status,
         role: tenant.role
       }
@@ -381,6 +422,137 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// ─── Google Sign-In config (public — Login/Register pages need this to know
+// whether to render the button, and what Client ID to initialize GIS with) ────
+router.get('/google-config', async (req: Request, res: Response) => {
+  try {
+    const config = await getGoogleAuthConfig();
+    res.json({ enabled: config.enabled, clientId: config.enabled ? config.clientId : '' });
+  } catch (error) {
+    console.error('Google config fetch error:', error);
+    res.status(500).json({ error: 'Failed to fetch Google sign-in config' });
+  }
+});
+
+// ─── Google Sign-In / Sign-Up ───────────────────────────────────────────────────
+// One endpoint handles both: verifies the Google ID token, then logs into an
+// existing (linked or email-matched + verified) tenant, or creates a new one.
+router.post('/google', loginLimiter, async (req: Request, res: Response) => {
+  try {
+    const { credential, termsAccepted } = req.body;
+    if (!credential) {
+      return res.status(400).json({ error: 'Missing Google credential' });
+    }
+
+    const config = await getGoogleAuthConfig();
+    if (!config.enabled) {
+      return res.status(400).json({ error: 'Google sign-in is not enabled' });
+    }
+
+    await ensureGoogleAuthColumns();
+
+    const client = new OAuth2Client(config.clientId);
+    let payload: any;
+    try {
+      const ticket = await client.verifyIdToken({ idToken: credential, audience: config.clientId });
+      payload = ticket.getPayload();
+    } catch (e) {
+      return res.status(401).json({ error: 'Invalid Google credential' });
+    }
+
+    if (!payload?.email || !payload.email_verified) {
+      return res.status(401).json({ error: 'Google account email is not verified' });
+    }
+
+    const email = payload.email.toLowerCase();
+    const googleId = payload.sub as string;
+
+    let tenant: any = null;
+    let isNewTenant = false;
+
+    // At most 2 attempts: the second only exists to re-check after a
+    // duplicate-key race (two concurrent requests for the same brand-new
+    // email/domain) — not a general retry loop.
+    for (let attemptNum = 0; attemptNum < 2 && !tenant; attemptNum++) {
+      const byGoogle: any = await query(
+        'SELECT id, email, store_name, store_domain, status, api_key, role FROM tenants WHERE google_id = ?',
+        [googleId]
+      );
+      if (byGoogle.length > 0) {
+        tenant = byGoogle[0];
+        break;
+      }
+
+      const byEmail: any = await query(
+        'SELECT id, email, store_name, store_domain, status, api_key, role, email_verified FROM tenants WHERE email = ?',
+        [email]
+      );
+      if (byEmail.length > 0) {
+        if (!byEmail[0].email_verified) {
+          return res.status(409).json({
+            error: 'An account with this email already exists. Log in with your password and verify your email first — Google Sign-In will then link automatically.',
+          });
+        }
+        await query('UPDATE tenants SET google_id = ? WHERE id = ?', [googleId, byEmail[0].id]);
+        tenant = byEmail[0];
+        break;
+      }
+
+      // No existing account — create one
+      if (termsAccepted !== true) {
+        return res.status(400).json({ error: 'You must accept the Terms & Conditions to create an account' });
+      }
+
+      const storeName = String(payload.name || email.split('@')[0]).slice(0, 255);
+      const storeDomain = await generateUniqueStoreDomain(email);
+      const apiKey = generateApiKey();
+      const trialEndsAt = new Date();
+      trialEndsAt.setDate(trialEndsAt.getDate() + 14);
+
+      try {
+        const result: any = await query(
+          `INSERT INTO tenants (store_name, store_domain, email, password_hash, plan_id, api_key, status, trial_ends_at, google_id, email_verified)
+           VALUES (?, ?, ?, NULL, 1, ?, 'trial', ?, ?, TRUE)`,
+          [storeName, storeDomain, email, apiKey, trialEndsAt, googleId]
+        );
+        const tenantId = result.insertId;
+        await provisionTenant({ tenantId, storeName, storeDomain, email, trialEndsAt });
+        tenant = { id: tenantId, email, store_name: storeName, store_domain: storeDomain, status: 'trial', api_key: apiKey, role: 'merchant' };
+        isNewTenant = true;
+      } catch (e: any) {
+        if (e?.code === 'ER_DUP_ENTRY' && attemptNum === 0) continue; // race — re-check by google_id/email above
+        throw e;
+      }
+    }
+
+    if (!tenant) {
+      return res.status(409).json({ error: 'Please try again' });
+    }
+
+    const hostCheck = checkSuperAdminHostAccess(tenant, req);
+    if (!hostCheck.ok) {
+      return res.status(hostCheck.status).json({ error: hostCheck.error });
+    }
+
+    const token = generateToken({ tenantId: tenant.id, apiKey: tenant.api_key, role: tenant.role });
+    res.status(isNewTenant ? 201 : 200).json({
+      message: isNewTenant ? 'Registration successful' : 'Login successful',
+      token,
+      tenant: {
+        id: tenant.id,
+        email: tenant.email,
+        storeName: tenant.store_name,
+        storeDomain: tenant.store_domain,
+        status: tenant.status,
+        role: tenant.role || 'merchant',
+      },
+    });
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(500).json({ error: 'Google sign-in failed' });
   }
 });
 

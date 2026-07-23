@@ -26,6 +26,13 @@ export async function ensureAccountColumns() {
     }
 }
 
+// ─── Google Sign-In columns (lazy migration) ───────────────────────────────────
+// password_hash becomes nullable since Google-only accounts have no password.
+export async function ensureGoogleAuthColumns() {
+    try { await query("ALTER TABLE tenants ADD COLUMN google_id VARCHAR(255) NULL UNIQUE"); } catch (_) { /* exists */ }
+    try { await query("ALTER TABLE tenants MODIFY COLUMN password_hash VARCHAR(255) NULL"); } catch (_) { /* already nullable */ }
+}
+
 // ─── Tokens ───────────────────────────────────────────────────────────────────
 // Raw token goes in the email link; only its SHA-256 hash is stored.
 export function generateToken(): { raw: string; hash: string } {

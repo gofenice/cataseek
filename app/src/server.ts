@@ -15,7 +15,7 @@ import hostingRoutes from './routes/hosting.routes';
 import moduleRoutes from './routes/module.routes';
 import { ensureHostingTables } from './services/hosting.service';
 import { ensureModuleTables } from './services/modules.service';
-import { ensureAccountColumns, startTrialEmailScheduler } from './services/account.service';
+import { ensureAccountColumns, ensureGoogleAuthColumns, startTrialEmailScheduler } from './services/account.service';
 
 // Load environment variables
 dotenv.config();
@@ -33,12 +33,12 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://checkout.razorpay.com"], // unsafe-eval needed for some dev tools
+      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://checkout.razorpay.com", "https://accounts.google.com/gsi/client"], // unsafe-eval needed for some dev tools
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "https:", "http:"], // Allow images from any HTTP/HTTPS source
       connectSrc: ["'self'", "https:", "http:"],
       fontSrc: ["'self'", "https:", "data:"],
-      frameSrc: ["'self'", "https://api.razorpay.com", "https://checkout.razorpay.com"], // Razorpay Checkout modal
+      frameSrc: ["'self'", "https://api.razorpay.com", "https://checkout.razorpay.com", "https://accounts.google.com"], // Razorpay Checkout modal + Google Identity Services
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
     },
@@ -139,6 +139,7 @@ ensureModuleTables().catch((e) => console.error('Module migration error:', e));
 ensureAccountColumns()
     .then(() => startTrialEmailScheduler())
     .catch((e) => console.error('Account migration error:', e));
+ensureGoogleAuthColumns().catch((e) => console.error('Google auth migration error:', e));
 
 // Start server
 app.listen(PORT, () => {

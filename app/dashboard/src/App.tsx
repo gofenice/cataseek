@@ -30,6 +30,7 @@ import AdminOrders from './pages/admin/AdminOrders';
 import AdminPayments from './pages/admin/AdminPayments';
 import AdminHosting from './pages/admin/AdminHosting';
 import AdminModules from './pages/admin/AdminModules';
+import AdminLoginSettings from './pages/admin/AdminLoginSettings';
 import Hosting from './pages/Hosting';
 
 import { isAdminHost } from './utils/host';
@@ -62,6 +63,7 @@ function App() {
             <Route path="payments" element={<AdminPayments />} />
             <Route path="hosting" element={<AdminHosting />} />
             <Route path="modules" element={<AdminModules />} />
+            <Route path="login-settings" element={<AdminLoginSettings />} />
           </Route>
 
           {/* On the admin host, the root always leads to the admin area */}

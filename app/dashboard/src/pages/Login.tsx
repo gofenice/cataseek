@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { isAdminHost, isLocalDev } from '../utils/host';
+import { renderGoogleButton } from '../utils/googleAuth';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -12,6 +13,8 @@ const Login: React.FC = () => {
     const [formData, setFormData] = useState({ email: '', password: '' });
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [googleConfig, setGoogleConfig] = useState<{ enabled: boolean; clientId: string } | null>(null);
+    const googleButtonRef = useRef<HTMLDivElement>(null);
 
     const { login } = useAuth();
     const navigate = useNavigate();
@@ -19,6 +22,35 @@ const Login: React.FC = () => {
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
+
+    useEffect(() => {
+        if (isAdminHost) return; // admin login stays password-only
+        api.get('/tenants/google-config').then(res => setGoogleConfig(res.data)).catch(() => {});
+    }, []);
+
+    const handleGoogleCredential = async (credential: string) => {
+        setError('');
+        setLoading(true);
+        try {
+            const response = await api.post('/tenants/google', { credential });
+            const tenantData = response.data.tenant;
+            login(response.data.token, tenantData);
+            navigate(tenantData.role === 'admin' ? '/admin' : '/');
+        } catch (err: any) {
+            setError(err.response?.data?.error || 'Google sign-in failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (!googleConfig?.enabled || !googleButtonRef.current) return;
+        renderGoogleButton({
+            clientId: googleConfig.clientId,
+            container: googleButtonRef.current,
+            onCredential: handleGoogleCredential,
+        }).catch(() => {});
+    }, [googleConfig]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -133,6 +165,20 @@ const Login: React.FC = () => {
                     >
                         {loading ? 'Logging in…' : isAdminHost ? 'Login to Console' : 'Login to Dashboard'}
                     </button>
+
+                    {googleConfig?.enabled && (
+                        <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0.25rem 0' }}>
+                                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                                <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>or</span>
+                                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                            </div>
+                            <div ref={googleButtonRef} style={{ display: 'flex', justifyContent: 'center' }} />
+                            <p style={{ fontSize: '0.75rem', textAlign: 'center', color: 'var(--text-dim)', margin: 0 }}>
+                                By continuing you agree to our Terms &amp; Privacy Policy
+                            </p>
+                        </>
+                    )}
 
                     {!isAdminHost && (
                         <p style={{ fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)', margin: 0 }}>

@@ -8,6 +8,7 @@ import { getRazorpayConfig, saveRazorpayConfig, maskSecret, getCompanyConfig, sa
 import { getRazorpayClient, ensurePaymentTables } from '../services/razorpay.service';
 import { ensureHostingTables } from '../services/hosting.service';
 import { syncYearlyVariant } from '../services/plan-sync.service';
+import { getGoogleAuthConfig, saveGoogleAuthConfig } from '../services/google-auth-settings.service';
 
 const router = express.Router();
 
@@ -547,6 +548,33 @@ router.put('/company-settings', async (req: AuthRequest, res: Response) => {
     } catch (error) {
         console.error('Company settings save error:', error);
         res.status(500).json({ error: 'Failed to save company settings' });
+    }
+});
+
+// ─── GET/PUT /api/admin/google-auth-settings ─────────────────────────────────
+// Google Sign-In config. No secret involved — the client-side GIS flow only
+// needs a Client ID (not secret information), so nothing here needs masking.
+router.get('/google-auth-settings', async (req: AuthRequest, res: Response) => {
+    try {
+        const config = await getGoogleAuthConfig(true);
+        res.json({ settings: config });
+    } catch (error) {
+        console.error('Google auth settings fetch error:', error);
+        res.status(500).json({ error: 'Failed to fetch Google sign-in settings' });
+    }
+});
+
+router.put('/google-auth-settings', async (req: AuthRequest, res: Response) => {
+    try {
+        const { enabled, clientId } = req.body;
+        if (enabled === true && !String(clientId || '').trim()) {
+            return res.status(400).json({ error: 'A Client ID is required to enable Google sign-in' });
+        }
+        await saveGoogleAuthConfig({ enabled, clientId });
+        res.json({ message: 'Google sign-in settings saved' });
+    } catch (error) {
+        console.error('Google auth settings save error:', error);
+        res.status(500).json({ error: 'Failed to save Google sign-in settings' });
     }
 });
 

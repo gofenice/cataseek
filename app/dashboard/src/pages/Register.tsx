@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { renderGoogleButton } from '../utils/googleAuth';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -17,6 +18,8 @@ const Register: React.FC = () => {
     const [termsAccepted, setTermsAccepted] = useState(false);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [googleConfig, setGoogleConfig] = useState<{ enabled: boolean; clientId: string } | null>(null);
+    const googleButtonRef = useRef<HTMLDivElement>(null);
 
     // Legal pages live on the marketing site (main domain in production)
     const LEGAL_BASE = import.meta.env.VITE_LEGAL_URL || 'https://cataseek.com';
@@ -27,6 +30,38 @@ const Register: React.FC = () => {
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setFormData({ ...formData, [e.target.name]: e.target.value });
     };
+
+    useEffect(() => {
+        api.get('/tenants/google-config').then(res => setGoogleConfig(res.data)).catch(() => {});
+    }, []);
+
+    const handleGoogleCredential = async (credential: string) => {
+        setError('');
+        setLoading(true);
+        try {
+            const response = await api.post('/tenants/google', { credential, termsAccepted: true });
+            login(response.data.token, response.data.tenant);
+            navigate('/');
+        } catch (err: any) {
+            setError(err.response?.data?.error || 'Google sign-up failed');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // Only render the button once terms are accepted — mirrors the gate
+    // already applied to the regular submit button below.
+    useEffect(() => {
+        if (!googleConfig?.enabled || !termsAccepted || !googleButtonRef.current) {
+            if (googleButtonRef.current) googleButtonRef.current.innerHTML = '';
+            return;
+        }
+        renderGoogleButton({
+            clientId: googleConfig.clientId,
+            container: googleButtonRef.current,
+            onCredential: handleGoogleCredential,
+        }).catch(() => {});
+    }, [googleConfig, termsAccepted]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -172,6 +207,23 @@ const Register: React.FC = () => {
                     >
                         {loading ? 'Creating account…' : 'Create Your Account'}
                     </button>
+
+                    {googleConfig?.enabled && (
+                        <>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0.25rem 0' }}>
+                                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                                <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>or</span>
+                                <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                            </div>
+                            {termsAccepted ? (
+                                <div ref={googleButtonRef} style={{ display: 'flex', justifyContent: 'center' }} />
+                            ) : (
+                                <p style={{ fontSize: '0.8rem', textAlign: 'center', color: 'var(--text-dim)', margin: 0 }}>
+                                    Check the box above to sign up with Google
+                                </p>
+                            )}
+                        </>
+                    )}
 
                     <p style={{ fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)', margin: 0 }}>
                         Already have an account?{' '}

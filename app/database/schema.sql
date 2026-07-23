@@ -4,7 +4,10 @@ CREATE TABLE IF NOT EXISTS tenants (
     store_name VARCHAR(255) NOT NULL,
     store_domain VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    -- Nullable: Google-only accounts (google_id set) have no password.
+    password_hash VARCHAR(255) NULL,
+    -- Google Sign-In identity (payload.sub) — NULL for password-only accounts.
+    google_id VARCHAR(255) UNIQUE NULL,
     plan_id INT,
     api_key VARCHAR(64) UNIQUE,
     api_password_hash VARCHAR(255),
