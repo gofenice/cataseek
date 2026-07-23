@@ -7,6 +7,7 @@ import { deleteTenantIndex } from '../config/meilisearch';
 import { getRazorpayConfig, saveRazorpayConfig, maskSecret, getCompanyConfig, saveCompanyConfig } from '../services/payment-settings.service';
 import { getRazorpayClient, ensurePaymentTables } from '../services/razorpay.service';
 import { ensureHostingTables } from '../services/hosting.service';
+import { syncYearlyVariant } from '../services/plan-sync.service';
 
 const router = express.Router();
 
@@ -268,6 +269,7 @@ router.delete('/tenants/:id', async (req: AuthRequest, res: Response) => {
 // ─── GET /api/admin/plans ────────────────────────────────────────────────────
 router.get('/plans', async (req: AuthRequest, res: Response) => {
     try {
+        await ensurePaymentTables();
         const plans: any = await query('SELECT * FROM plans ORDER BY price ASC');
         res.json({ plans });
     } catch (error) {
@@ -277,17 +279,23 @@ router.get('/plans', async (req: AuthRequest, res: Response) => {
 });
 
 // ─── POST /api/admin/plans ────────────────────────────────────────────────────
+// Yearly billing: only monthly plans are directly created here. A yearly
+// sibling (parent_plan_id → this row) is auto-generated from
+// yearly_discount_percent — see syncYearlyVariant.
 router.post('/plans', async (req: AuthRequest, res: Response) => {
     try {
-        const { name, description, price, billing_period, max_products, max_requests_per_month, features } = req.body;
+        await ensurePaymentTables();
+        const { name, description, price, max_products, max_requests_per_month, features, yearly_discount_percent } = req.body;
         if (!name || price == null || !max_requests_per_month) {
             return res.status(400).json({ error: 'name, price, and max_requests_per_month are required' });
         }
+        const discount = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
         const result: any = await query(
-            `INSERT INTO plans (name, description, price, billing_period, max_products, max_requests_per_month, features, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, TRUE)`,
-            [name, description || '', price, billing_period || 'monthly', max_products || 0, max_requests_per_month, JSON.stringify(features || [])]
+            `INSERT INTO plans (name, description, price, billing_period, max_products, max_requests_per_month, features, yearly_discount_percent, is_active)
+       VALUES (?, ?, ?, 'monthly', ?, ?, ?, ?, TRUE)`,
+            [name, description || '', price, max_products || 0, max_requests_per_month, JSON.stringify(features || []), discount]
         );
+        await syncYearlyVariant('plans', result.insertId);
         res.status(201).json({ message: 'Plan created', id: result.insertId });
     } catch (error) {
         console.error('Admin plan create error:', error);
@@ -298,18 +306,28 @@ router.post('/plans', async (req: AuthRequest, res: Response) => {
 // ─── PATCH /api/admin/plans/:id ───────────────────────────────────────────────
 router.patch('/plans/:id', async (req: AuthRequest, res: Response) => {
     try {
+        await ensurePaymentTables();
         const { id } = req.params;
-        const { name, description, price, billing_period, max_products, max_requests_per_month, features, is_active } = req.body;
+
+        const existing: any = await query('SELECT parent_plan_id FROM plans WHERE id = ?', [id]);
+        if (!existing || existing.length === 0) {
+            return res.status(404).json({ error: 'Plan not found' });
+        }
+        if (existing[0].parent_plan_id !== null) {
+            return res.status(400).json({ error: 'Yearly plans are auto-generated — edit the monthly plan instead.' });
+        }
+
+        const { name, description, price, max_products, max_requests_per_month, features, is_active, yearly_discount_percent } = req.body;
 
         const allowed: Record<string, any> = {};
         if (name !== undefined) allowed.name = name;
         if (description !== undefined) allowed.description = description;
         if (price !== undefined) allowed.price = price;
-        if (billing_period !== undefined) allowed.billing_period = billing_period;
         if (max_products !== undefined) allowed.max_products = max_products;
         if (max_requests_per_month !== undefined) allowed.max_requests_per_month = max_requests_per_month;
         if (features !== undefined) allowed.features = JSON.stringify(features);
         if (is_active !== undefined) allowed.is_active = is_active ? 1 : 0;
+        if (yearly_discount_percent !== undefined) allowed.yearly_discount_percent = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
 
         if (Object.keys(allowed).length === 0) {
             return res.status(400).json({ error: 'Nothing to update' });
@@ -317,6 +335,7 @@ router.patch('/plans/:id', async (req: AuthRequest, res: Response) => {
 
         const setClauses = Object.keys(allowed).map(k => `${k} = ?`).join(', ');
         await query(`UPDATE plans SET ${setClauses}, updated_at = NOW() WHERE id = ?`, [...Object.values(allowed), id]);
+        await syncYearlyVariant('plans', Number(id));
         res.json({ message: 'Plan updated' });
     } catch (error) {
         console.error('Admin plan update error:', error);
@@ -328,7 +347,15 @@ router.patch('/plans/:id', async (req: AuthRequest, res: Response) => {
 router.delete('/plans/:id', async (req: AuthRequest, res: Response) => {
     try {
         const { id } = req.params;
+        const existing: any = await query('SELECT parent_plan_id FROM plans WHERE id = ?', [id]);
+        if (!existing || existing.length === 0) {
+            return res.status(404).json({ error: 'Plan not found' });
+        }
+        if (existing[0].parent_plan_id !== null) {
+            return res.status(400).json({ error: 'Yearly plans are auto-generated — deactivate the monthly plan instead.' });
+        }
         await query('UPDATE plans SET is_active = FALSE WHERE id = ?', [id]);
+        await syncYearlyVariant('plans', Number(id)); // cascades is_active to the yearly sibling
         res.json({ message: 'Plan deactivated' });
     } catch (error) {
         console.error('Admin plan deactivate error:', error);
@@ -367,20 +394,25 @@ router.get('/hosting-plans', async (req: AuthRequest, res: Response) => {
 });
 
 // POST /api/admin/hosting-plans
+// Yearly billing: only monthly plans are directly created here. A yearly
+// sibling (parent_plan_id → this row) is auto-generated from
+// yearly_discount_percent — see syncYearlyVariant.
 router.post('/hosting-plans', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
-        const { name, price, storage_gb, ram_gb, bandwidth, billing_period } = req.body;
+        const { name, price, storage_gb, ram_gb, bandwidth, yearly_discount_percent } = req.body;
 
         if (!name || price == null || storage_gb == null || ram_gb == null) {
             return res.status(400).json({ error: 'name, price, storage_gb, and ram_gb are required' });
         }
 
+        const discount = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
         const result: any = await query(
-            `INSERT INTO hosting_plans (name, price, storage_gb, ram_gb, bandwidth, billing_period, is_active)
-             VALUES (?, ?, ?, ?, ?, ?, TRUE)`,
-            [name, price, storage_gb, ram_gb, bandwidth || 'Unlimited', billing_period === 'yearly' ? 'yearly' : 'monthly']
+            `INSERT INTO hosting_plans (name, price, storage_gb, ram_gb, bandwidth, billing_period, yearly_discount_percent, is_active)
+             VALUES (?, ?, ?, ?, ?, 'monthly', ?, TRUE)`,
+            [name, price, storage_gb, ram_gb, bandwidth || 'Unlimited', discount]
         );
+        await syncYearlyVariant('hosting_plans', result.insertId);
         res.status(201).json({ message: 'Hosting plan created', id: result.insertId });
     } catch (error) {
         console.error('Admin hosting plan create error:', error);
@@ -393,7 +425,16 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
         const { id } = req.params;
-        const { name, price, storage_gb, ram_gb, bandwidth, billing_period, is_active } = req.body;
+
+        const existing: any = await query('SELECT parent_plan_id FROM hosting_plans WHERE id = ?', [id]);
+        if (!existing || existing.length === 0) {
+            return res.status(404).json({ error: 'Hosting plan not found' });
+        }
+        if (existing[0].parent_plan_id !== null) {
+            return res.status(400).json({ error: 'Yearly plans are auto-generated — edit the monthly plan instead.' });
+        }
+
+        const { name, price, storage_gb, ram_gb, bandwidth, is_active, yearly_discount_percent } = req.body;
 
         const allowed: Record<string, any> = {};
         if (name !== undefined) allowed.name = name;
@@ -401,8 +442,8 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
         if (storage_gb !== undefined) allowed.storage_gb = storage_gb;
         if (ram_gb !== undefined) allowed.ram_gb = ram_gb;
         if (bandwidth !== undefined) allowed.bandwidth = bandwidth;
-        if (billing_period !== undefined) allowed.billing_period = billing_period === 'yearly' ? 'yearly' : 'monthly';
         if (is_active !== undefined) allowed.is_active = is_active ? 1 : 0;
+        if (yearly_discount_percent !== undefined) allowed.yearly_discount_percent = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
 
         if (Object.keys(allowed).length === 0) {
             return res.status(400).json({ error: 'Nothing to update' });
@@ -410,6 +451,7 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
 
         const setClauses = Object.keys(allowed).map(k => `${k} = ?`).join(', ');
         await query(`UPDATE hosting_plans SET ${setClauses}, updated_at = NOW() WHERE id = ?`, [...Object.values(allowed), id]);
+        await syncYearlyVariant('hosting_plans', Number(id));
         res.json({ message: 'Hosting plan updated' });
     } catch (error) {
         console.error('Admin hosting plan update error:', error);
@@ -421,7 +463,16 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
 router.delete('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
-        await query('UPDATE hosting_plans SET is_active = FALSE WHERE id = ?', [req.params.id]);
+        const { id } = req.params;
+        const existing: any = await query('SELECT parent_plan_id FROM hosting_plans WHERE id = ?', [id]);
+        if (!existing || existing.length === 0) {
+            return res.status(404).json({ error: 'Hosting plan not found' });
+        }
+        if (existing[0].parent_plan_id !== null) {
+            return res.status(400).json({ error: 'Yearly plans are auto-generated — deactivate the monthly plan instead.' });
+        }
+        await query('UPDATE hosting_plans SET is_active = FALSE WHERE id = ?', [id]);
+        await syncYearlyVariant('hosting_plans', Number(id)); // cascades is_active to the yearly sibling
         res.json({ message: 'Hosting plan deactivated' });
     } catch (error) {
         console.error('Admin hosting plan deactivate error:', error);

@@ -10,6 +10,8 @@ interface HostingPlan {
     bandwidth: string;
     billing_period: 'monthly' | 'yearly';
     is_active: boolean;
+    parent_plan_id: number | null;
+    yearly_discount_percent: number;
 }
 
 interface Stats {
@@ -18,7 +20,8 @@ interface Stats {
 }
 
 const emptyForm = {
-    name: '', price: '', storage_gb: '', ram_gb: '', bandwidth: 'Unlimited', billing_period: 'monthly', is_active: true,
+    name: '', price: '', storage_gb: '', ram_gb: '', bandwidth: 'Unlimited', is_active: true,
+    yearly_discount_percent: '15',
 };
 
 const AdminHosting: React.FC = () => {
@@ -54,8 +57,9 @@ const AdminHosting: React.FC = () => {
         setForm({
             name: p.name, price: String(p.price),
             storage_gb: String(p.storage_gb), ram_gb: String(p.ram_gb),
-            bandwidth: p.bandwidth, billing_period: p.billing_period,
+            bandwidth: p.bandwidth,
             is_active: p.is_active,
+            yearly_discount_percent: String(p.yearly_discount_percent ?? 0),
         });
         setEditingId(p.id);
         setMsg('');
@@ -71,8 +75,8 @@ const AdminHosting: React.FC = () => {
                 storage_gb: parseInt(form.storage_gb) || 0,
                 ram_gb: parseFloat(form.ram_gb) || 0,
                 bandwidth: form.bandwidth || 'Unlimited',
-                billing_period: form.billing_period,
                 is_active: form.is_active,
+                yearly_discount_percent: Math.min(99, Math.max(0, parseFloat(form.yearly_discount_percent) || 0)),
             };
             if (editingId) {
                 await api.patch(`/admin/hosting-plans/${editingId}`, payload);
@@ -138,20 +142,32 @@ const AdminHosting: React.FC = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                {['Name', 'Amount', 'Size', 'RAM', 'Data', 'Billing', 'Status', ''].map(h => (
+                                {['Name', 'Monthly', 'Yearly', 'Size', 'RAM', 'Data', 'Status', ''].map(h => (
                                     <th key={h} style={{ padding: '0.85rem 1rem', textAlign: 'left', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {plans.map(plan => (
+                            {plans.filter(p => p.parent_plan_id === null).map(plan => {
+                                const yearly = plans.find(p => p.parent_plan_id === plan.id);
+                                return (
                                 <tr key={plan.id} style={{ borderBottom: '1px solid rgba(20,32,26,0.06)' }}>
                                     <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-main)' }}>{plan.name}</td>
-                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>{Number(plan.price).toFixed(2)}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/{plan.billing_period === 'yearly' ? 'yr' : 'mo'}</span></td>
+                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>{Number(plan.price).toFixed(2)}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/mo</span></td>
+                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>
+                                        {yearly ? (
+                                            <>{Number(yearly.price).toFixed(2)}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/yr</span>{' '}
+                                                {plan.yearly_discount_percent > 0 && (
+                                                    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', padding: '0.1rem 0.5rem', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700 }}>
+                                                        {plan.yearly_discount_percent}% off
+                                                    </span>
+                                                )}
+                                            </>
+                                        ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                                    </td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.storage_gb} GB</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{Number(plan.ram_gb)} GB</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.bandwidth}</td>
-                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', textTransform: 'capitalize' }}>{plan.billing_period}</td>
                                     <td style={{ padding: '0.85rem 1rem' }}>
                                         <span style={{ background: plan.is_active ? 'rgba(16,185,129,0.1)' : 'rgba(107,114,128,0.1)', color: plan.is_active ? '#10b981' : '#6b7280', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600 }}>
                                             {plan.is_active ? 'Active' : 'Inactive'}
@@ -166,7 +182,8 @@ const AdminHosting: React.FC = () => {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 )}
@@ -203,17 +220,16 @@ const AdminHosting: React.FC = () => {
 
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                             <div>
-                                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Amount</label>
+                                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Monthly Amount</label>
                                 <input type="number" placeholder="9.99" value={form.price}
                                     onChange={e => setForm(prev => ({ ...prev, price: e.target.value }))}
                                     style={inputStyle} />
                             </div>
                             <div>
-                                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Billing Period</label>
-                                <select value={form.billing_period} onChange={e => setForm(prev => ({ ...prev, billing_period: e.target.value }))} style={inputStyle}>
-                                    <option value="monthly">Monthly</option>
-                                    <option value="yearly">Yearly</option>
-                                </select>
+                                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Yearly Discount %</label>
+                                <input type="number" min={0} max={99} placeholder="15" value={form.yearly_discount_percent}
+                                    onChange={e => setForm(prev => ({ ...prev, yearly_discount_percent: e.target.value }))}
+                                    style={inputStyle} />
                             </div>
                             <div>
                                 <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Size (GB storage)</label>
@@ -234,6 +250,9 @@ const AdminHosting: React.FC = () => {
                             <input type="text" placeholder="e.g. 1 TB or Unlimited" value={form.bandwidth}
                                 onChange={e => setForm(prev => ({ ...prev, bandwidth: e.target.value }))}
                                 style={inputStyle} />
+                        </div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: -8 }}>
+                            A yearly plan is auto-generated at (monthly amount × 12) minus the discount above.
                         </div>
 
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

@@ -6,11 +6,13 @@ interface Plan {
     price: number; billing_period: string;
     max_products: number; max_requests_per_month: number;
     features: string | string[]; is_active: boolean;
+    parent_plan_id: number | null; yearly_discount_percent: number;
 }
 
 const emptyForm = {
-    name: '', description: '', price: '', billing_period: 'monthly',
+    name: '', description: '', price: '',
     max_products: '', max_requests_per_month: '', features: '', is_active: true,
+    yearly_discount_percent: '15',
 };
 
 const parseFeatures = (f: string | string[]): string[] => {
@@ -48,10 +50,11 @@ const AdminPlans: React.FC = () => {
     const openEdit = (p: Plan) => {
         setForm({
             name: p.name, description: p.description, price: String(p.price),
-            billing_period: p.billing_period, max_products: String(p.max_products),
+            max_products: String(p.max_products),
             max_requests_per_month: String(p.max_requests_per_month),
             features: parseFeatures(p.features).join('\n'),
             is_active: p.is_active,
+            yearly_discount_percent: String(p.yearly_discount_percent ?? 0),
         });
         setEditingId(p.id);
         setMsg('');
@@ -63,11 +66,12 @@ const AdminPlans: React.FC = () => {
         try {
             const payload = {
                 name: form.name, description: form.description,
-                price: parseFloat(form.price), billing_period: form.billing_period,
+                price: parseFloat(form.price),
                 max_products: parseInt(form.max_products) || 0,
                 max_requests_per_month: parseInt(form.max_requests_per_month),
                 features: form.features.split('\n').map(s => s.trim()).filter(Boolean),
                 is_active: form.is_active,
+                yearly_discount_percent: Math.min(99, Math.max(0, parseFloat(form.yearly_discount_percent) || 0)),
             };
             if (editingId) {
                 await api.patch(`/admin/plans/${editingId}`, payload);
@@ -115,19 +119,32 @@ const AdminPlans: React.FC = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                {['Name', 'Price', 'Searches/mo', 'Max Products', 'Status', ''].map(h => (
+                                {['Name', 'Monthly Price', 'Yearly Price', 'Searches/mo', 'Max Products', 'Status', ''].map(h => (
                                     <th key={h} style={{ padding: '0.85rem 1rem', textAlign: 'left', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {plans.map(plan => (
+                            {plans.filter(p => p.parent_plan_id === null).map(plan => {
+                                const yearly = plans.find(p => p.parent_plan_id === plan.id);
+                                return (
                                 <tr key={plan.id} style={{ borderBottom: '1px solid rgba(20,32,26,0.06)' }}>
                                     <td style={{ padding: '0.85rem 1rem' }}>
                                         <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>{plan.name}</div>
                                         <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{plan.description}</div>
                                     </td>
-                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>${plan.price}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/{plan.billing_period}</span></td>
+                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>${plan.price}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/mo</span></td>
+                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>
+                                        {yearly ? (
+                                            <>${yearly.price}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/yr</span>{' '}
+                                                {plan.yearly_discount_percent > 0 && (
+                                                    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', padding: '0.1rem 0.5rem', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700 }}>
+                                                        {plan.yearly_discount_percent}% off
+                                                    </span>
+                                                )}
+                                            </>
+                                        ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                                    </td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.max_requests_per_month.toLocaleString()}</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.max_products.toLocaleString()}</td>
                                     <td style={{ padding: '0.85rem 1rem' }}>
@@ -144,7 +161,8 @@ const AdminPlans: React.FC = () => {
                                         </div>
                                     </td>
                                 </tr>
-                            ))}
+                                );
+                            })}
                         </tbody>
                     </table>
                 )}
@@ -164,7 +182,7 @@ const AdminPlans: React.FC = () => {
                         {([
                             { label: 'Plan Name', key: 'name', type: 'text', placeholder: 'e.g. Starter' },
                             { label: 'Description', key: 'description', type: 'text', placeholder: 'Short description' },
-                            { label: 'Price (USD)', key: 'price', type: 'number', placeholder: '29.99' },
+                            { label: 'Monthly Price (USD)', key: 'price', type: 'number', placeholder: '29.99' },
                             { label: 'Max Searches/Month', key: 'max_requests_per_month', type: 'number', placeholder: '10000' },
                             { label: 'Max Products', key: 'max_products', type: 'number', placeholder: '1000' },
                         ] as { label: string; key: keyof typeof emptyForm; type: string; placeholder: string }[]).map(f => (
@@ -177,11 +195,13 @@ const AdminPlans: React.FC = () => {
                         ))}
 
                         <div>
-                            <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Billing Period</label>
-                            <select value={form.billing_period} onChange={e => setForm(prev => ({ ...prev, billing_period: e.target.value }))} style={inputStyle}>
-                                <option value="monthly">Monthly</option>
-                                <option value="yearly">Yearly</option>
-                            </select>
+                            <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Yearly Discount %</label>
+                            <input type="number" min={0} max={99} placeholder="15" value={form.yearly_discount_percent}
+                                onChange={e => setForm(prev => ({ ...prev, yearly_discount_percent: e.target.value }))}
+                                style={inputStyle} />
+                            <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                                A yearly plan is auto-generated at (monthly price × 12) minus this discount. Set to 0 for no discount.
+                            </div>
                         </div>
 
                         <div>

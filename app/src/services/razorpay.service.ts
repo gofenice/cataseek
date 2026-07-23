@@ -2,6 +2,7 @@ import Razorpay from 'razorpay';
 import crypto from 'crypto';
 import { query } from '../config/database';
 import { getRazorpayConfig, RazorpayConfig } from './payment-settings.service';
+import { backfillYearlyVariants } from './plan-sync.service';
 
 // ─── Razorpay client (credentials come from admin-configured DB settings) ─────
 export async function getRazorpayClient(): Promise<{ client: Razorpay; config: RazorpayConfig }> {
@@ -52,6 +53,12 @@ export async function ensurePaymentTables() {
     // subscriptions: track the Razorpay subscription id alongside the stripe one
     try { await query("ALTER TABLE subscriptions ADD COLUMN razorpay_subscription_id VARCHAR(64) NULL"); } catch (_) { /* exists */ }
     try { await query("ALTER TABLE subscriptions ADD INDEX idx_rzp_sub (razorpay_subscription_id)"); } catch (_) { /* exists */ }
+
+    // Yearly billing: monthly rows are the source of truth, yearly siblings
+    // (linked via parent_plan_id) are auto-generated — see plan-sync.service.
+    try { await query("ALTER TABLE plans ADD COLUMN yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0"); } catch (_) { /* exists */ }
+    try { await query("ALTER TABLE plans ADD COLUMN parent_plan_id INT NULL"); } catch (_) { /* exists */ }
+    await backfillYearlyVariants('plans');
 
     migrated = true;
 }

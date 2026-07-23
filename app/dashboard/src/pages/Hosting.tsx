@@ -10,9 +10,12 @@ interface HostingPlan {
     ram_gb: number;
     bandwidth: string;
     billing_period: 'monthly' | 'yearly';
+    parent_plan_id: number | null;
+    yearly_discount_percent: number;
 }
 
 interface HostingSubscription {
+    hosting_plan_id: number;
     plan_name: string;
     price: number;
     storage_gb: number;
@@ -70,6 +73,7 @@ const Hosting: React.FC = () => {
     const [cancelling, setCancelling] = useState(false);
     const [message, setMessage] = useState('');
     const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
+    const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -208,7 +212,17 @@ const Hosting: React.FC = () => {
         );
     }
 
-    const currentPlanName = subscription?.plan_name;
+    const currentPlanId = subscription?.hosting_plan_id;
+
+    // Tiers are grouped by their monthly root; the toggle swaps in each
+    // tier's yearly sibling (linked via parent_plan_id) when selected.
+    const rootPlans = plans.filter(p => p.parent_plan_id === null);
+    const displayPlans = rootPlans.map(root =>
+        billingPeriod === 'yearly'
+            ? plans.find(p => p.parent_plan_id === root.id) || root
+            : root
+    );
+    const hasYearlyOption = rootPlans.some(root => plans.some(p => p.parent_plan_id === root.id));
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -314,17 +328,43 @@ const Hosting: React.FC = () => {
 
             {/* Plans */}
             <div>
-                <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '1rem' }}>
-                    {subscription ? 'Switch Plan' : 'Available Hosting Plans'}
-                </h2>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                    <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
+                        {subscription ? 'Switch Plan' : 'Available Hosting Plans'}
+                    </h2>
+                    {hasYearlyOption && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'monthly' ? 700 : 500, color: billingPeriod === 'monthly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Monthly</span>
+                            <button
+                                onClick={() => setBillingPeriod(p => p === 'monthly' ? 'yearly' : 'monthly')}
+                                style={{
+                                    position: 'relative', width: 44, height: 24, borderRadius: 99, border: 'none', cursor: 'pointer',
+                                    background: billingPeriod === 'yearly' ? 'var(--primary)' : 'rgba(20,32,26,0.15)', transition: 'background 0.2s',
+                                }}
+                                aria-label="Toggle yearly billing"
+                            >
+                                <span style={{
+                                    position: 'absolute', top: 3, left: billingPeriod === 'yearly' ? 23 : 3,
+                                    width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
+                                }} />
+                            </button>
+                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'yearly' ? 700 : 500, color: billingPeriod === 'yearly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Yearly</span>
+                            {billingPeriod === 'yearly' && rootPlans[0]?.yearly_discount_percent > 0 && (
+                                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: 99, border: '1px solid rgba(16,185,129,0.3)' }}>
+                                    Save up to {Math.max(...rootPlans.map(p => p.yearly_discount_percent || 0))}%
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
                 {plans.length === 0 ? (
                     <div className="glass" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                         No hosting plans available right now. Check back soon.
                     </div>
                 ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
-                        {plans.map(plan => {
-                            const isCurrent = plan.name === currentPlanName;
+                        {displayPlans.map(plan => {
+                            const isCurrent = plan.id === currentPlanId;
                             return (
                                 <div key={plan.id} className="glass" style={{
                                     padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.1rem',

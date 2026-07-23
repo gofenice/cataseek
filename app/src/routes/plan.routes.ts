@@ -2,6 +2,7 @@ import express from 'express';
 import { query } from '../config/database';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
 import { getRazorpayConfig } from '../services/payment-settings.service';
+import { ensurePaymentTables } from '../services/razorpay.service';
 import Stripe from 'stripe';
 
 const router = express.Router();
@@ -12,8 +13,9 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
 // Get all available plans (public — also consumed by the marketing site's pricing section)
 router.get('/plans', async (req, res) => {
   try {
+    await ensurePaymentTables();
     const plans: any = await query(
-      'SELECT id, name, description, price, billing_period, max_products, max_requests_per_month, features FROM plans WHERE is_active = TRUE ORDER BY price ASC'
+      'SELECT id, name, description, price, billing_period, max_products, max_requests_per_month, features, parent_plan_id, yearly_discount_percent FROM plans WHERE is_active = TRUE ORDER BY price ASC'
     );
 
     let currency = 'USD';

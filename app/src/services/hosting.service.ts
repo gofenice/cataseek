@@ -3,6 +3,7 @@ import { generateInvoicePDF } from './pdf.service';
 import { sendInvoiceEmail } from './mailer.service';
 import { getRazorpayClient } from './razorpay.service';
 import { getCompanyConfig } from './payment-settings.service';
+import { backfillYearlyVariants } from './plan-sync.service';
 
 // ─── Hosting product ──────────────────────────────────────────────────────────
 // Second product line: on-demand hosting. Plans are admin-managed and the
@@ -57,6 +58,12 @@ export async function ensureHostingTables() {
 
     // Distinguish products in the shared orders table
     try { await query("ALTER TABLE orders ADD COLUMN product VARCHAR(20) NOT NULL DEFAULT 'search'"); } catch (_) { /* exists */ }
+
+    // Yearly billing: monthly rows are the source of truth, yearly siblings
+    // (linked via parent_plan_id) are auto-generated — see plan-sync.service.
+    try { await query("ALTER TABLE hosting_plans ADD COLUMN yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0"); } catch (_) { /* exists */ }
+    try { await query("ALTER TABLE hosting_plans ADD COLUMN parent_plan_id INT NULL"); } catch (_) { /* exists */ }
+    await backfillYearlyVariants('hosting_plans');
 
     migrated = true;
 }

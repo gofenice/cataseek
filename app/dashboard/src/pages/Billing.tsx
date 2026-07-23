@@ -13,9 +13,12 @@ interface Plan {
     max_products: number;
     max_requests_per_month: number;
     features: string | string[];
+    parent_plan_id: number | null;
+    yearly_discount_percent: number;
 }
 
 interface Subscription {
+    plan_id: number;
     plan_name: string;
     price: number;
     billing_period: string;
@@ -150,6 +153,7 @@ const Billing: React.FC = () => {
     const [message,      setMessage]      = useState('');
     const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
     const [searchEnabled, setSearchEnabled] = useState(true);
+    const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
 
     const fetchData = useCallback(async () => {
         setLoading(true);
@@ -328,7 +332,17 @@ const Billing: React.FC = () => {
         </div>
     );
 
-    const currentPlanId = plans.find(p => p.name === subscription?.plan_name || p.name === usage?.planName)?.id;
+    const currentPlanId = subscription?.plan_id;
+
+    // Tiers are grouped by their monthly root; the toggle swaps in each
+    // tier's yearly sibling (linked via parent_plan_id) when selected.
+    const rootPlans = plans.filter(p => p.parent_plan_id === null);
+    const displayPlans = rootPlans.map(root =>
+        billingPeriod === 'yearly'
+            ? plans.find(p => p.parent_plan_id === root.id) || root
+            : root
+    );
+    const hasYearlyOption = rootPlans.some(root => plans.some(p => p.parent_plan_id === root.id));
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
@@ -460,9 +474,35 @@ const Billing: React.FC = () => {
             {/* Plan cards (search product only) */}
             {searchEnabled && (
             <div>
-                <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: '1rem' }}>Available Plans</h2>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                    <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>Available Plans</h2>
+                    {hasYearlyOption && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'monthly' ? 700 : 500, color: billingPeriod === 'monthly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Monthly</span>
+                            <button
+                                onClick={() => setBillingPeriod(p => p === 'monthly' ? 'yearly' : 'monthly')}
+                                style={{
+                                    position: 'relative', width: 44, height: 24, borderRadius: 99, border: 'none', cursor: 'pointer',
+                                    background: billingPeriod === 'yearly' ? 'var(--primary)' : 'rgba(20,32,26,0.15)', transition: 'background 0.2s',
+                                }}
+                                aria-label="Toggle yearly billing"
+                            >
+                                <span style={{
+                                    position: 'absolute', top: 3, left: billingPeriod === 'yearly' ? 23 : 3,
+                                    width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
+                                }} />
+                            </button>
+                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'yearly' ? 700 : 500, color: billingPeriod === 'yearly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Yearly</span>
+                            {billingPeriod === 'yearly' && rootPlans[0]?.yearly_discount_percent > 0 && (
+                                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: 99, border: '1px solid rgba(16,185,129,0.3)' }}>
+                                    Save up to {Math.max(...rootPlans.map(p => p.yearly_discount_percent || 0))}%
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
-                    {plans.map((plan, i) => {
+                    {displayPlans.map((plan, i) => {
                         const isCurrent = plan.id === currentPlanId;
                         const isPopular = i === 1;
                         const features  = parseFeatures(plan.features);
@@ -625,7 +665,7 @@ const Billing: React.FC = () => {
             {/* Payment notice */}
             {payConfig?.gateway === 'razorpay' ? (
                 <div style={{ background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 10, padding: '1rem 1.25rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    🔒 <strong style={{ color: 'var(--text-main)' }}>Secure payments by Razorpay.</strong> Subscriptions renew automatically each {plans[0]?.billing_period === 'yearly' ? 'year' : 'month'} and invoices are emailed to you. Cancel anytime — access continues until the end of the paid period.
+                    🔒 <strong style={{ color: 'var(--text-main)' }}>Secure payments by Razorpay.</strong> Subscriptions renew automatically each {billingPeriod === 'yearly' ? 'year' : 'month'} and invoices are emailed to you. Cancel anytime — access continues until the end of the paid period.
                     {payConfig.mode === 'test' && <span style={{ color: '#f59e0b' }}> (Test mode — no real charges)</span>}
                 </div>
             ) : (

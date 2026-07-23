@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS plans (
     features JSON,
     is_active BOOLEAN DEFAULT TRUE,
     stripe_price_id VARCHAR(100),
+    -- Yearly billing: a monthly row is the source of truth; its yearly
+    -- sibling is auto-generated/kept in sync (see plan-sync.service.ts).
+    yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
+    parent_plan_id INT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

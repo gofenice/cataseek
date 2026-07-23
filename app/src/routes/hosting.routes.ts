@@ -28,7 +28,7 @@ router.get('/plans', authenticateJWT, async (req: AuthRequest, res: Response) =>
         if (!enabled) return res.json({ enabled: false, plans: [], subscription: null });
 
         const plans: any = await query(
-            'SELECT id, name, price, storage_gb, ram_gb, bandwidth, billing_period FROM hosting_plans WHERE is_active = TRUE ORDER BY price ASC'
+            'SELECT id, name, price, storage_gb, ram_gb, bandwidth, billing_period, parent_plan_id, yearly_discount_percent FROM hosting_plans WHERE is_active = TRUE ORDER BY price ASC'
         );
 
         const subs: any = await query(
