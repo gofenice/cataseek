@@ -3,7 +3,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // The Cataseek app (login / signup / dashboard).
 // Local dev: http://localhost:3000 — Production: the tenant dashboard subdomain
-const DASHBOARD_URL = "https://admin.cataseek.com";
+const DASHBOARD_URL = "https://console.cataseek.com";
 
 /* ============================================================
    TWEAK DEFAULTS
