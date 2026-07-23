@@ -349,7 +349,7 @@ router.post('/login', loginLimiter, async (req: Request, res: Response) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Host separation: super admins sign in only on the console host,
+    // Host separation: super admins sign in only on the admin host,
     // merchants only elsewhere (no restriction when SUPERADMIN_HOST is unset, e.g. local dev)
     const superAdminHost = process.env.SUPERADMIN_HOST;
     if (superAdminHost) {

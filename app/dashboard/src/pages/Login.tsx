@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../services/api';
 import { useAuth } from '../context/AuthContext';
-import { isConsoleHost, isLocalDev } from '../utils/host';
+import { isAdminHost, isLocalDev } from '../utils/host';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -27,13 +27,13 @@ const Login: React.FC = () => {
         try {
             const response = await api.post('/tenants/login', formData);
             const tenantData = response.data.tenant;
-            if (isConsoleHost && tenantData.role !== 'admin') {
+            if (isAdminHost && tenantData.role !== 'admin') {
                 setError('This login is for Cataseek administrators only');
                 return;
             }
-            // Mirror guard: super-admin accounts only sign in on the console subdomain
-            if (!isConsoleHost && !isLocalDev && tenantData.role === 'admin') {
-                setError('Super admin accounts must sign in at the console subdomain');
+            // Mirror guard: super-admin accounts only sign in on the admin subdomain
+            if (!isAdminHost && !isLocalDev && tenantData.role === 'admin') {
+                setError('Super admin accounts must sign in at the admin subdomain');
                 return;
             }
             login(response.data.token, tenantData);
@@ -58,7 +58,7 @@ const Login: React.FC = () => {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <Logo />
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                        {isConsoleHost ? 'Super admin console' : 'Merchant dashboard'}
+                        {isAdminHost ? 'Super admin console' : 'Merchant dashboard'}
                     </p>
                 </div>
 
@@ -74,10 +74,10 @@ const Login: React.FC = () => {
                 }}>
                     <div>
                         <h1 style={{ fontSize: '1.4rem', fontWeight: 600, margin: '0 0 4px', letterSpacing: '-0.025em' }}>
-                            {isConsoleHost ? 'Super Admin' : 'Welcome back'}
+                            {isAdminHost ? 'Super Admin' : 'Welcome back'}
                         </h1>
                         <p style={{ fontSize: '0.875rem', color: 'var(--text-muted)', margin: 0 }}>
-                            {isConsoleHost ? 'Sign in to the Cataseek control panel' : 'Log in to manage your store search'}
+                            {isAdminHost ? 'Sign in to the Cataseek control panel' : 'Log in to manage your store search'}
                         </p>
                     </div>
 
@@ -131,10 +131,10 @@ const Login: React.FC = () => {
                         className="btn-primary"
                         style={{ marginTop: '0.25rem', width: '100%', padding: '0.75rem' }}
                     >
-                        {loading ? 'Logging in…' : isConsoleHost ? 'Login to Console' : 'Login to Dashboard'}
+                        {loading ? 'Logging in…' : isAdminHost ? 'Login to Console' : 'Login to Dashboard'}
                     </button>
 
-                    {!isConsoleHost && (
+                    {!isAdminHost && (
                         <p style={{ fontSize: '0.875rem', textAlign: 'center', color: 'var(--text-muted)', margin: 0 }}>
                             No account?{' '}
                             <Link to="/register" style={{ color: 'var(--primary)', fontWeight: 500 }}>

@@ -100,7 +100,7 @@ app.use('/api/billing', billingRoutes);
 app.use('/api/hosting', hostingRoutes);
 app.use('/api/modules', moduleRoutes);
 
-// The super-admin subdomain (e.g. console.cataseek.com) lands on the admin area
+// The super-admin subdomain (e.g. admin.cataseek.com) lands on the admin area
 if (superAdminHost) {
   app.use((req: Request, res: Response, next: any) => {
     if (req.hostname === superAdminHost && req.path === '/') {

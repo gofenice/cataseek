@@ -32,7 +32,7 @@ import AdminHosting from './pages/admin/AdminHosting';
 import AdminModules from './pages/admin/AdminModules';
 import Hosting from './pages/Hosting';
 
-import { isConsoleHost } from './utils/host';
+import { isAdminHost } from './utils/host';
 
 import './assets/global.css';
 
@@ -43,7 +43,7 @@ function App() {
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<Login />} />
-          <Route path="/register" element={isConsoleHost ? <Navigate to="/login" replace /> : <Register />} />
+          <Route path="/register" element={isAdminHost ? <Navigate to="/login" replace /> : <Register />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
           <Route path="/verify-email" element={<VerifyEmail />} />
@@ -64,8 +64,8 @@ function App() {
             <Route path="modules" element={<AdminModules />} />
           </Route>
 
-          {/* On the console host, the root always leads to the admin area */}
-          {isConsoleHost && <Route path="/" element={<Navigate to="/admin" replace />} />}
+          {/* On the admin host, the root always leads to the admin area */}
+          {isAdminHost && <Route path="/" element={<Navigate to="/admin" replace />} />}
 
           {/* Protected Merchant Dashboard Routes */}
           <Route path="/" element={
