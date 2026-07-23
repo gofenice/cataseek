@@ -46,7 +46,7 @@
   a { color: inherit; text-decoration: none; }
   button { font-family: inherit; }
   .mono { font-family: 'Geist Mono', ui-monospace, monospace; }
-  .serif-i { font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 400; }
+  .serif-i { font-family: 'Instrument Serif', serif; font-style: italic; font-weight: 400; letter-spacing: 2px; }
 
   /* Layout */
   .wrap { max-width: 1180px; margin: 0 auto; padding: 0 28px; }
@@ -80,6 +80,7 @@
 
   /* Section */
   section { padding: 96px 0; }
+  section[id] { scroll-margin-top: 80px; } /* clears the sticky nav when jumped to via anchor link */
   .section-head { display: flex; flex-direction: column; gap: 18px; max-width: 720px; margin-bottom: 56px; }
   .section-head h2 { font-size: clamp(32px, 4.2vw, 48px); margin: 0; letter-spacing: -0.025em; line-height: 1.05; font-weight: 500; }
   .section-head p { color: var(--ink-2); font-size: 17px; margin: 0; max-width: 560px; }
