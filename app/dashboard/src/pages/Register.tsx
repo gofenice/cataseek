@@ -49,19 +49,14 @@ const Register: React.FC = () => {
         }
     };
 
-    // Only render the button once terms are accepted — mirrors the gate
-    // already applied to the regular submit button below.
     useEffect(() => {
-        if (!googleConfig?.enabled || !termsAccepted || !googleButtonRef.current) {
-            if (googleButtonRef.current) googleButtonRef.current.innerHTML = '';
-            return;
-        }
+        if (!googleConfig?.enabled || !googleButtonRef.current) return;
         renderGoogleButton({
             clientId: googleConfig.clientId,
             container: googleButtonRef.current,
             onCredential: handleGoogleCredential,
         }).catch(() => {});
-    }, [googleConfig, termsAccepted]);
+    }, [googleConfig]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -215,13 +210,10 @@ const Register: React.FC = () => {
                                 <span style={{ fontSize: '0.78rem', color: 'var(--text-dim)' }}>or</span>
                                 <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
                             </div>
-                            {termsAccepted ? (
-                                <div ref={googleButtonRef} style={{ display: 'flex', justifyContent: 'center' }} />
-                            ) : (
-                                <p style={{ fontSize: '0.8rem', textAlign: 'center', color: 'var(--text-dim)', margin: 0 }}>
-                                    Check the box above to sign up with Google
-                                </p>
-                            )}
+                            <div ref={googleButtonRef} style={{ display: 'flex', justifyContent: 'center' }} />
+                            <p style={{ fontSize: '0.75rem', textAlign: 'center', color: 'var(--text-dim)', margin: 0 }}>
+                                By continuing you agree to our Terms &amp; Privacy Policy
+                            </p>
                         </>
                     )}
 

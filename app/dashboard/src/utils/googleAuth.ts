@@ -41,5 +41,6 @@ export async function renderGoogleButton(opts: {
         theme: 'outline',
         size: 'large',
         width: 360,
+        logo_alignment: 'center',
     });
 }
