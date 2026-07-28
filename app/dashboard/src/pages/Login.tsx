@@ -32,7 +32,9 @@ const Login: React.FC = () => {
         setError('');
         setLoading(true);
         try {
-            const response = await api.post('/tenants/google', { credential });
+            // termsAccepted: true — the "By continuing you agree to our Terms & Privacy Policy"
+            // notice shown below the Google button covers acceptance for new-account creation.
+            const response = await api.post('/tenants/google', { credential, termsAccepted: true });
             const tenantData = response.data.tenant;
             login(response.data.token, tenantData);
             navigate(tenantData.role === 'admin' ? '/admin' : '/');

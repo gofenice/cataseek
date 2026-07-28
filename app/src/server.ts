@@ -30,6 +30,10 @@ if (process.env.NODE_ENV === 'production') {
 
 // Middleware
 app.use(helmet({
+  // 'same-origin-allow-popups' is required for Google Identity Services (GIS).
+  // The default 'same-origin' nullifies window.opener in cross-origin popups,
+  // which breaks the GIS popup flow (gsi/transform can't postMessage back to us).
+  crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
@@ -44,6 +48,7 @@ app.use(helmet({
     },
   },
 }));
+
 app.use(cors({
   origin: true, // Allow any origin (required for public search widget on merchant sites)
   credentials: true
