@@ -52,7 +52,7 @@ const Header: React.FC = () => {
                 >
                     <div style={{ textAlign: 'right' }}>
                         <div style={{ fontSize: '0.875rem', fontWeight: 500 }}>{tenant?.email}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--success)' }}>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--accent)' }}>
                             {tenant?.status === 'trial' ? 'Trial active' : 'Plan active'}
                         </div>
                     </div>

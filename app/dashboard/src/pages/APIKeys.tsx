@@ -130,8 +130,8 @@ const APIKeys: React.FC = () => {
                     </div>
                 </div>
 
-                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
-                    <code style={{ fontSize: '0.9rem', color: 'var(--accent)', wordBreak: 'break-all', maxWidth: '80%' }}>
+                <div style={{ background: 'rgba(255, 255, 255, .7)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.5rem', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
+                    <code style={{ fontSize: '1rem', color: 'var(--accent)', wordBreak: 'break-all', maxWidth: '80%' }}>
                         {apiKey}
                     </code>
                     <button

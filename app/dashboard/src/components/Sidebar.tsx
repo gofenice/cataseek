@@ -40,15 +40,15 @@ const Sidebar: React.FC = () => {
 
     const navItems = [
         ...(searchEnabled ? [
-            { icon: <LayoutDashboard size={18} />, label: 'Overview',       path: '/'          },
-            { icon: <BarChart3 size={18} />,       label: 'Analytics',      path: '/analytics' },
-            { icon: <Key size={18} />,             label: 'API Keys',       path: '/keys'      },
-            { icon: <Package size={18} />,         label: 'Catalog',        path: '/catalog'   },
-            { icon: <Search size={18} />,          label: 'Search Preview', path: '/preview'   },
-            { icon: <Download size={18} />,        label: 'Plugins',        path: '/plugins'   },
+            { icon: <LayoutDashboard size={18} />, label: 'Overview', path: '/' },
+            { icon: <BarChart3 size={18} />, label: 'Analytics', path: '/analytics' },
+            { icon: <Key size={18} />, label: 'API Keys', path: '/keys' },
+            { icon: <Package size={18} />, label: 'Catalog', path: '/catalog' },
+            { icon: <Search size={18} />, label: 'Search Preview', path: '/preview' },
+            { icon: <Download size={18} />, label: 'Plugins', path: '/plugins' },
         ] : []),
         ...(hostingEnabled ? [{ icon: <Server size={18} />, label: 'Hosting', path: '/hosting' }] : []),
-        { icon: <CreditCard size={18} />,      label: 'Billing',        path: '/billing'   },
+        { icon: <CreditCard size={18} />, label: 'Billing', path: '/billing' },
         ...(searchEnabled ? [{ icon: <Settings size={18} />, label: 'Settings', path: '/settings' }] : []),
     ];
 
@@ -89,6 +89,7 @@ const Sidebar: React.FC = () => {
                         key={item.path}
                         to={item.path}
                         end={item.path === '/'}
+                        className="sidebar-link"
                         style={({ isActive }) => linkStyle(isActive)}
                     >
                         {item.icon}

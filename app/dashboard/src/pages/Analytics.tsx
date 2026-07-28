@@ -109,7 +109,7 @@ const Analytics: React.FC = () => {
               label="Zero-Result Rate"
               value={`${data.summary.zeroResultRate}%`}
               sub={data.summary.zeroResultRate > 20 ? '⚠️ Consider expanding catalogue' : 'Looking good'}
-              valueColor={data.summary.zeroResultRate > 20 ? '#f59e0b' : '#10b981'}
+              valueColor={data.summary.zeroResultRate > 20 ? '#f59e0b' : '#769714'}
             />
           </div>
 

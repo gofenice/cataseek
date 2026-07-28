@@ -35,7 +35,7 @@ const StatCard: React.FC<{
 );
 
 const UsageBar: React.FC<{ pct: number }> = ({ pct }) => {
-    const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#10b981';
+    const color = pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--accent)' : 'var(--success)';
     return (
         <div style={{ background: 'rgba(20,32,26,0.04)', borderRadius: 99, height: 6, overflow: 'hidden', marginTop: 8 }}>
             <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 99, transition: 'width 0.8s ease' }} />
@@ -119,7 +119,7 @@ const Dashboard: React.FC = () => {
                             label="Usage"
                             value={`${stats.usagePercent}%`}
                             sub={stats.usagePercent >= 90 ? '⚠️ Near limit' : stats.usagePercent >= 70 ? 'Getting close' : 'Looking good'}
-                            subColor={stats.usagePercent >= 90 ? '#ef4444' : stats.usagePercent >= 70 ? '#f59e0b' : '#10b981'}
+                            subColor={stats.usagePercent >= 90 ? '#ef4444' : stats.usagePercent >= 70 ? '#f59e0b' : '#769714'}
                         />
                         <StatCard
                             label="Active Plan"

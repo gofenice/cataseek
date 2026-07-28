@@ -111,7 +111,7 @@ const fmt = (d: string | null) =>
     d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
 
 const UsageBar: React.FC<{ pct: number }> = ({ pct }) => {
-    const color = pct >= 90 ? '#ef4444' : pct >= 70 ? '#f59e0b' : '#10b981';
+    const color = pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--accent)' : 'var(--success)';
     return (
         <div style={{ background: 'rgba(20,32,26,0.04)', borderRadius: 99, height: 8, overflow: 'hidden', marginTop: 8 }}>
             <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 99, transition: 'width 0.6s ease' }} />
@@ -121,16 +121,16 @@ const UsageBar: React.FC<{ pct: number }> = ({ pct }) => {
 
 const StatusBadge: React.FC<{ status: Invoice['status'] }> = ({ status }) => {
     const map: Record<string, { color: string; bg: string; icon: React.ReactNode; label: string }> = {
-        paid:    { color: '#10b981', bg: 'rgba(16,185,129,0.1)',  icon: <CheckCircle size={12} />, label: 'Paid' },
-        pending: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', icon: <Clock size={12} />,        label: 'Pending' },
-        failed:  { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  icon: <XCircle size={12} />,     label: 'Failed' },
+        paid:    { color: 'var(--primary)', bg: 'var(--bg-main)',  icon: <CheckCircle size={12} />, label: 'Paid' },
+        pending: { color: 'var(--accent)', bg: 'var(--bg-2)', icon: <Clock size={12} />,        label: 'Pending' },
+        failed:  { color: 'var(--danger)', bg: 'var(--bg-2)',  icon: <XCircle size={12} />,     label: 'Failed' },
     };
     const s = map[status] || map.pending;
     return (
         <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             background: s.bg, color: s.color,
-            fontSize: '0.72rem', fontWeight: 700, padding: '3px 8px', borderRadius: 99,
+            fontSize: '0.72rem', fontWeight: 700, padding: '3px 8px', borderRadius: 99, border: `1px solid ${s.color}`,
         }}>
             {s.icon} {s.label}
         </span>
@@ -431,7 +431,7 @@ const Billing: React.FC = () => {
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>
                                 {currencySymbol}{subscription.price} / {subscription.billing_period}
                             </div>
-                            <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
                             </div>
                             <button
@@ -516,7 +516,7 @@ const Billing: React.FC = () => {
                                     <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: 'var(--primary)', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>POPULAR</div>
                                 )}
                                 {isCurrent && (
-                                    <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: '#10b981', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>CURRENT PLAN</div>
+                                    <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: 'var(--text-main)', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>CURRENT PLAN</div>
                                 )}
                                 <div>
                                     <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>{plan.name}</div>
@@ -539,8 +539,8 @@ const Billing: React.FC = () => {
                                     style={{
                                         padding: '0.7rem', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
                                         cursor: isCurrent ? 'default' : 'pointer',
-                                        background: isCurrent ? 'rgba(16,185,129,0.15)' : 'var(--primary)',
-                                        color: isCurrent ? '#10b981' : '#fff',
+                                        background: isCurrent ? 'var(--text-main)' : 'var(--primary)',
+                                        color: isCurrent ? '#ffffff' : '#fff',
                                         opacity: subscribing !== null && subscribing !== plan.id ? 0.5 : 1,
                                         transition: 'all 0.2s',
                                     }}
