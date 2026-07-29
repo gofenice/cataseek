@@ -19,7 +19,7 @@
   --accent: #719406;
   --accent-hover: #b7de45;
   --accent-ink: #FFFFFF;
-  
+
   --success: #99C124;
   --warning: #f59e0b;
   --error: #ef4444;
@@ -152,7 +152,8 @@ textarea {
 }
 
 .btn-primary:hover {
-  background: var(--primary-hover);
+  background: var(--text-main);
+  color: var(--primary-hover)
 }
 
 .btn-primary:disabled {
