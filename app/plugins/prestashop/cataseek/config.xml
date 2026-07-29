@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<module>
+    <name>cataseek</name>
+    <displayName><![CDATA[Cataseek Search]]></displayName>
+    <version><![CDATA[1.0.0]]></version>
+    <description><![CDATA[Powerful search engine that understands your customers intent.]]></description>
+    <author><![CDATA[gofenice]]></author>
+    <tab><![CDATA[search_filter]]></tab>
+    <is_configurable>1</is_configurable>
+    <need_instance>0</need_instance>
+    <limited_countries></limited_countries>
+</module>
