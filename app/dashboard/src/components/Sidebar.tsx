@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { prefetch } from '../services/cache';
 
 const Logo = () => (
     <img src="/logo.png" alt="Cataseek" style={{ height: 22, width: 'auto', display: 'block', alignSelf: 'flex-start' }} />
@@ -67,6 +68,30 @@ const Sidebar: React.FC = () => {
         transition: 'all 0.15s ease',
     });
 
+    const handlePrefetch = (path: string) => {
+        switch (path) {
+            case '/':
+                prefetch('/products/stats');
+                prefetch('/tenants/profile');
+                break;
+            case '/billing':
+                prefetch('/billing/invoices');
+                prefetch('/plans/plans');
+                prefetch('/billing/current');
+                break;
+            case '/settings':
+                prefetch('/tenants/profile');
+                prefetch('/tenants/google-config');
+                break;
+            case '/catalog':
+                prefetch('/products');
+                break;
+            case '/keys':
+                prefetch('/tenants/profile');
+                break;
+        }
+    };
+
     return (
         <aside style={{
             width: '240px',
@@ -90,6 +115,7 @@ const Sidebar: React.FC = () => {
                         to={item.path}
                         end={item.path === '/'}
                         className="sidebar-link"
+                        onMouseEnter={() => handlePrefetch(item.path)}
                         style={({ isActive }) => linkStyle(isActive)}
                     >
                         {item.icon}

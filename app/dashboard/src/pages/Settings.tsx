@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../services/api';
+import { getCachedData, setCachedData } from '../services/cache';
 
 interface AppSettings {
     theme_color: string;
@@ -67,14 +68,21 @@ const Preview: React.FC<{ s: AppSettings }> = ({ s }) => {
 };
 
 const Settings: React.FC = () => {
-    const [settings, setSettings] = useState<AppSettings>({ ...DEFAULTS });
-    const [loading, setLoading] = useState(true);
+    const cachedSettings = getCachedData('/tenants/settings');
+    const [settings, setSettings] = useState<AppSettings>(
+        cachedSettings ? { ...DEFAULTS, ...cachedSettings.settings } : { ...DEFAULTS }
+    );
+    const [loading, setLoading] = useState(!cachedSettings);
     const [saving, setSaving] = useState(false);
     const [msg, setMsg] = useState('');
 
     useEffect(() => {
         api.get('/tenants/settings')
-            .then(r => { setSettings({ ...DEFAULTS, ...r.data.settings }); setLoading(false); })
+            .then(r => {
+                setCachedData('/tenants/settings', r.data);
+                setSettings({ ...DEFAULTS, ...r.data.settings });
+                setLoading(false);
+            })
             .catch(() => setLoading(false));
     }, []);
 

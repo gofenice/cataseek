@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
+import { getCachedData, setCachedData } from '../services/cache';
 
 interface Stats {
     productCount: number;
@@ -48,20 +49,26 @@ const fmt = (n: number): string => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : Str
 const Dashboard: React.FC = () => {
     const { tenant } = useAuth();
     const navigate = useNavigate();
-    const [stats, setStats] = useState<Stats | null>(null);
-    const [loading, setLoading] = useState(true);
+    const cachedStats = getCachedData('/tenants/stats');
+    const [stats, setStats] = useState<Stats | null>(cachedStats || null);
+    const [loading, setLoading] = useState(!cachedStats);
 
     useEffect(() => {
         // Hosting-only clients have no search overview — send them to Hosting
         api.get('/tenants/profile')
             .then(r => {
+                setCachedData('/tenants/profile', r.data);
                 const se = r.data.tenant?.search_enabled;
                 if (se !== undefined && se !== null && !se) navigate('/hosting', { replace: true });
             })
             .catch(() => { /* default: stay */ });
 
         api.get('/tenants/stats')
-            .then(r => { setStats(r.data); setLoading(false); })
+            .then(r => {
+                setCachedData('/tenants/stats', r.data);
+                setStats(r.data);
+                setLoading(false);
+            })
             .catch(() => setLoading(false));
     }, [navigate]);
 

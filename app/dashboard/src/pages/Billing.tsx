@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Download, CreditCard, TrendingUp, Clock, CheckCircle, XCircle, AlertCircle, FileText, PartyPopper, Receipt } from 'lucide-react';
 import api from '../services/api';
+import { getCachedData, setCachedData } from '../services/cache';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Plan {
@@ -99,8 +100,9 @@ const loadRazorpayScript = (): Promise<void> => {
         razorpayScriptPromise = new Promise((resolve, reject) => {
             const script = document.createElement('script');
             script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+            script.async = true;
             script.onload = () => resolve();
-            script.onerror = () => { razorpayScriptPromise = null; reject(new Error('Failed to load Razorpay')); };
+            script.onerror = () => { razorpayScriptPromise = null; reject(new Error('Failed to load Razorpay SDK')); };
             document.body.appendChild(script);
         });
     }
@@ -140,13 +142,20 @@ const StatusBadge: React.FC<{ status: Invoice['status'] }> = ({ status }) => {
 // ─── Component ────────────────────────────────────────────────────────────────
 const Billing: React.FC = () => {
     const navigate = useNavigate();
-    const [plans,        setPlans]        = useState<Plan[]>([]);
-    const [subscription, setSubscription] = useState<Subscription | null>(null);
-    const [usage,        setUsage]        = useState<Usage | null>(null);
-    const [invoices,     setInvoices]     = useState<Invoice[]>([]);
-    const [orders,       setOrders]       = useState<Order[]>([]);
-    const [payConfig,    setPayConfig]    = useState<PaymentConfig | null>(null);
-    const [loading,      setLoading]      = useState(true);
+    const cachedPlans = getCachedData('/plans/plans');
+    const cachedSub = getCachedData('/plans/subscription');
+    const cachedUsage = getCachedData('/plans/usage');
+    const cachedInv = getCachedData('/billing/invoices');
+    const cachedCfg = getCachedData('/billing/payment-config');
+    const cachedOrd = getCachedData('/billing/orders');
+
+    const [plans,        setPlans]        = useState<Plan[]>(cachedPlans?.plans || []);
+    const [subscription, setSubscription] = useState<Subscription | null>(cachedSub?.subscription || null);
+    const [usage,        setUsage]        = useState<Usage | null>(cachedUsage || null);
+    const [invoices,     setInvoices]     = useState<Invoice[]>(cachedInv?.invoices || []);
+    const [orders,       setOrders]       = useState<Order[]>(cachedOrd?.orders || []);
+    const [payConfig,    setPayConfig]    = useState<PaymentConfig | null>(cachedCfg || null);
+    const [loading,      setLoading]      = useState(!cachedPlans);
     const [subscribing,  setSubscribing]  = useState<number | null>(null);
     const [cancelling,   setCancelling]   = useState(false);
     const [downloading,  setDownloading]  = useState<number | null>(null);
@@ -156,7 +165,6 @@ const Billing: React.FC = () => {
     const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
 
     const fetchData = useCallback(async () => {
-        setLoading(true);
         try {
             const [plansRes, subRes, usageRes, invRes, cfgRes, ordRes, profRes] = await Promise.all([
                 api.get('/plans/plans'),
@@ -167,6 +175,13 @@ const Billing: React.FC = () => {
                 api.get('/billing/orders'),
                 api.get('/tenants/profile'),
             ]);
+            setCachedData('/plans/plans', plansRes.data);
+            setCachedData('/plans/subscription', subRes.data);
+            setCachedData('/plans/usage', usageRes.data);
+            setCachedData('/billing/invoices', invRes.data);
+            setCachedData('/billing/payment-config', cfgRes.data);
+            setCachedData('/billing/orders', ordRes.data);
+
             setPlans(plansRes.data.plans || []);
             setSubscription(subRes.data.subscription);
             setUsage(usageRes.data);

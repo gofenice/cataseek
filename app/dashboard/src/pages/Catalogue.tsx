@@ -4,6 +4,7 @@ import {
   Loader2, Image as ImageIcon, Search, Eye, EyeOff, X, RefreshCw, AlertTriangle
 } from 'lucide-react';
 import api from '../services/api';
+import { getCachedData, setCachedData } from '../services/cache';
 
 interface Product {
   id: string;
@@ -28,12 +29,22 @@ interface Pagination {
 }
 
 const Catalog: React.FC = () => {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [languages, setLanguages] = useState<string[]>([]);
-  const [selectedLanguage, setSelectedLanguage] = useState<string>('');
-  const [storeDomain, setStoreDomain] = useState<string>('');
-  const [pagination, setPagination] = useState<Pagination>({ total: 0, page: 1, limit: 12, totalPages: 1 });
-  const [isLoading, setIsLoading] = useState(true);
+  const cachedLangs = getCachedData('/products/languages');
+  const cachedProdData = getCachedData('/products');
+
+  const [products, setProducts] = useState<Product[]>(() => {
+    if (!cachedProdData?.products) return [];
+    return cachedProdData.products.map((p: any) => ({
+      ...p,
+      images: typeof p.images === 'string' ? JSON.parse(p.images) : p.images,
+      hidden: Number(p.hidden ?? 0),
+    }));
+  });
+  const [languages, setLanguages] = useState<string[]>(cachedLangs?.languages || []);
+  const [selectedLanguage, setSelectedLanguage] = useState<string>(cachedLangs?.languages?.[0] || '');
+  const [storeDomain, setStoreDomain] = useState<string>(cachedProdData?.storeDomain || '');
+  const [pagination, setPagination] = useState<Pagination>(cachedProdData?.pagination || { total: 0, page: 1, limit: 12, totalPages: 1 });
+  const [isLoading, setIsLoading] = useState(!cachedProdData);
   const [error, setError] = useState('');
 
   // Search
@@ -55,9 +66,10 @@ const Catalog: React.FC = () => {
   useEffect(() => {
     api.get('/products/languages')
       .then((res) => {
+        setCachedData('/products/languages', res.data);
         const langs: string[] = res.data.languages || [];
         setLanguages(langs);
-        if (langs.length > 0) setSelectedLanguage(langs[0]);
+        if (langs.length > 0 && !selectedLanguage) setSelectedLanguage(langs[0]);
       })
       .catch((err) => console.error('Fetch languages error:', err));
   }, []);
@@ -80,7 +92,9 @@ const Catalog: React.FC = () => {
 
   // ─── Fetch Products ────────────────────────────────────────────────
   const fetchProducts = useCallback(async (page: number, language: string, search: string, showHiddenFlag: boolean) => {
-    setIsLoading(true);
+    if (!getCachedData('/products') || page !== 1 || search || showHiddenFlag) {
+      setIsLoading(true);
+    }
     setError('');
     try {
       const params: any = { page, limit: 12 };
@@ -90,6 +104,10 @@ const Catalog: React.FC = () => {
 
       const response = await api.get('/products', { params });
       const data = response.data;
+
+      if (page === 1 && !search && !showHiddenFlag) {
+        setCachedData('/products', data);
+      }
 
       const parsedProducts = data.products.map((p: any) => ({
         ...p,
