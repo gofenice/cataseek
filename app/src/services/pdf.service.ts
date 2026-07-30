@@ -1,6 +1,8 @@
 import PDFDocument from 'pdfkit';
 import https from 'https';
 import http from 'http';
+import fs from 'fs';
+import path from 'path';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface InvoiceData {
@@ -63,6 +65,42 @@ function fetchImage(url: string): Promise<Buffer> {
   });
 }
 
+// In-memory logo buffer cache to eliminate HTTP network delays on PDF generation
+let cachedLogoBuf: Buffer | null = null;
+
+async function getLogoBuffer(logoUrl: string): Promise<Buffer | null> {
+  if (cachedLogoBuf) return cachedLogoBuf;
+
+  // 1. Try local filesystem disk path first (instant 0ms latency)
+  try {
+    const candidatePaths = [
+      path.join(__dirname, '../../dashboard/public/logo-white.png'),
+      path.join(__dirname, '../../dashboard/dist/logo-white.png'),
+      path.join(process.cwd(), 'dashboard/public/logo-white.png'),
+      path.join(process.cwd(), 'dashboard/dist/logo-white.png'),
+    ];
+    for (const p of candidatePaths) {
+      if (fs.existsSync(p)) {
+        cachedLogoBuf = fs.readFileSync(p);
+        return cachedLogoBuf;
+      }
+    }
+  } catch { /* ignore filesystem error */ }
+
+  // 2. Fall back to remote HTTP fetch if local file not found
+  if (logoUrl) {
+    try {
+      const buf = await fetchImage(logoUrl);
+      if (buf && buf.length > 0) {
+        cachedLogoBuf = buf;
+        return cachedLogoBuf;
+      }
+    } catch { /* ignore fetch error */ }
+  }
+
+  return null;
+}
+
 // Draw a filled rounded rectangle
 function roundedRect(
   doc: PDFKit.PDFDocument,
@@ -104,17 +142,18 @@ export function generateInvoicePDF(data: InvoiceData): Promise<Buffer> {
     doc.rect(0, 0, PW, HDR_H).fill(PRIMARY);
     y = 0;
 
-    // Logo: try to fetch from logoUrl or FRONTEND_URL, fall back to styled brand text
+    // Logo: try instant local/cached logo first, fall back to styled brand vector
     const consoleUrl = (process.env.FRONTEND_URL || 'https://console.cataseek.com').replace('admin.cataseek.com', 'console.cataseek.com').replace(/\/$/, '');
     const logoUrl = process.env.LOGO_URL || `${consoleUrl}/logo-white.png`;
     let logoLoaded = false;
-    if (logoUrl) {
-      try {
-        const imgBuf = await fetchImage(logoUrl);
+    
+    try {
+      const imgBuf = await getLogoBuffer(logoUrl);
+      if (imgBuf) {
         doc.image(imgBuf, L, 16, { height: 48, fit: [140, 48] });
         logoLoaded = true;
-      } catch { /* fall through to styled brand logo */ }
-    }
+      }
+    } catch { /* fall through to styled brand logo */ }
 
     if (!logoLoaded) {
       // Draw a rounded dark-green square with lime 'C'
