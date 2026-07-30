@@ -322,9 +322,9 @@ const Billing: React.FC = () => {
                 ))}
             </div>
             {/* Plan cards grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '1.25rem' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 320px))', gap: '1.25rem' }}>
                 {[1, 2, 3].map(i => (
-                    <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    <div key={i} className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: 320, width: '100%' }}>
                         <div className="skeleton" style={{ height: 16, width: 90 }} />
                         <div className="skeleton" style={{ height: 32, width: 120 }} />
                         {[1, 2, 3].map(j => <div key={j} className="skeleton" style={{ height: 11, width: '80%' }} />)}
@@ -509,14 +509,14 @@ const Billing: React.FC = () => {
                             </button>
                             <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'yearly' ? 700 : 500, color: billingPeriod === 'yearly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Yearly</span>
                             {billingPeriod === 'yearly' && rootPlans[0]?.yearly_discount_percent > 0 && (
-                                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: 99, border: '1px solid rgba(16,185,129,0.3)' }}>
+                                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#99c124', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: 99, border: '1px solid rgba(16,185,129,0.3)' }}>
                                     Save up to {Math.max(...rootPlans.map(p => p.yearly_discount_percent || 0))}%
                                 </span>
                             )}
                         </div>
                     )}
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 320px))', gap: '1.25rem', alignItems: 'stretch' }}>
                     {displayPlans.map((plan, i) => {
                         const isCurrent = plan.id === currentPlanId;
                         const isPopular = i === 1;
@@ -525,7 +525,7 @@ const Billing: React.FC = () => {
                             <div key={plan.id} className="glass" style={{
                                 padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1rem',
                                 border: isCurrent ? '2px solid var(--primary)' : isPopular ? '1px solid rgba(5,150,105,0.4)' : '1px solid var(--border)',
-                                position: 'relative', borderRadius: 12,
+                                position: 'relative', borderRadius: 12, maxWidth: 320, width: '100%',
                             }}>
                                 {isPopular && !isCurrent && (
                                     <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: 'var(--primary)', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>POPULAR</div>
@@ -649,7 +649,7 @@ const Billing: React.FC = () => {
                             <tbody>
                                 {orders.map((o, i) => {
                                     const sMap: Record<string, { color: string; label: string }> = {
-                                        captured: { color: '#10b981', label: 'Paid' },
+                                        captured: { color: '#99c124', label: 'Paid' },
                                         created: { color: '#059669', label: 'Initiated' },
                                         authorized: { color: '#f59e0b', label: 'Authorized' },
                                         failed: { color: '#ef4444', label: 'Failed' },
