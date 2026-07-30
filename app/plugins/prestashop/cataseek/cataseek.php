@@ -37,7 +37,7 @@ class Cataseek extends Module
     public function install()
     {
         Configuration::updateValue('CATASEEK_LIVE_MODE', false);
-        Configuration::updateValue('CATASEEK_API_URL', 'https://admin.cataseek.com/api');
+        Configuration::updateValue('CATASEEK_API_URL', 'https://console.cataseek.com/api');
 
         return parent::install()
             && $this->installTab()
@@ -270,13 +270,13 @@ class Cataseek extends Module
             . '&module_name=' . $this->name . '&submitCataseekRefreshSettings=1';
 
         $this->context->smarty->assign([
-            'cataseek_dashboard_url' => 'https://admin.cataseek.com/settings',
+            'cataseek_dashboard_url' => 'https://console.cataseek.com/settings',
             'cataseek_refresh_url' => $refreshUrl,
         ]);
 
         return [
             'CATASEEK_LIVE_MODE' => (bool) Configuration::get('CATASEEK_LIVE_MODE'),
-            'CATASEEK_API_URL' => Configuration::get('CATASEEK_API_URL') ?: 'https://admin.cataseek.com/api',
+            'CATASEEK_API_URL' => Configuration::get('CATASEEK_API_URL') ?: 'https://console.cataseek.com/api',
             'CATASEEK_API_KEY' => Configuration::get('CATASEEK_API_KEY'),
             'CATASEEK_API_PASSWORD' => '',
             'CATASEEK_SELECTOR' => Configuration::get('CATASEEK_SELECTOR'),
@@ -311,7 +311,7 @@ class Cataseek extends Module
             }
         }
 
-        $apiUrl = rtrim((string) (Configuration::get('CATASEEK_API_URL') ?: 'https://admin.cataseek.com/api'), '/');
+        $apiUrl = rtrim((string) (Configuration::get('CATASEEK_API_URL') ?: 'https://console.cataseek.com/api'), '/');
         $apiKey = (string) Configuration::get('CATASEEK_API_KEY');
         $apiPass = (string) Configuration::get('CATASEEK_API_PASSWORD');
 
