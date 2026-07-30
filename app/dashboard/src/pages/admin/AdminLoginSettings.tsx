@@ -53,7 +53,7 @@ const AdminLoginSettings: React.FC = () => {
                 <div className="glass" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading...</div>
             ) : (
                 <div className="glass" style={{ padding: '1.75rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-                    {msg && <div style={{ color: msg.startsWith('✅') ? '#10b981' : '#ef4444', fontSize: '0.87rem' }}>{msg}</div>}
+                    {msg && <div style={{ color: msg.startsWith('✅') ? '#99c124' : '#ef4444', fontSize: '0.87rem' }}>{msg}</div>}
 
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         <input type="checkbox" id="google_enabled" checked={form.enabled}

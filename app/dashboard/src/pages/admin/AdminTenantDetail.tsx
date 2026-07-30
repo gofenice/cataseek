@@ -12,7 +12,7 @@ interface TenantDetail {
 interface UsageDay { date: string; requests: number; }
 
 const statusColor: Record<string, string> = {
-    active: '#10b981', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#6b7280'
+    active: '#', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#6b7280'
 };
 
 const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
@@ -136,7 +136,7 @@ const AdminTenantDetail: React.FC = () => {
             <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
                 <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)' }}>Edit Tenant</h2>
 
-                {msg && <div style={{ color: msg.startsWith('✅') ? '#10b981' : '#ef4444', fontSize: '0.9rem' }}>{msg}</div>}
+                {msg && <div style={{ color: msg.startsWith('✅') ? '#99c124' : '#ef4444', fontSize: '0.9rem' }}>{msg}</div>}
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                     <Field label="Store Name">

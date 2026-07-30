@@ -125,7 +125,7 @@ const AdminPayments: React.FC = () => {
 
             {msg && (
                 <div style={{
-                    color: msg.startsWith('✅') ? '#10b981' : '#ef4444',
+                    color: msg.startsWith('✅') ? '#99c124' : '#ef4444',
                     background: msg.startsWith('✅') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
                     border: `1px solid ${msg.startsWith('✅') ? 'rgba(16,185,129,0.3)' : 'rgba(239,68,68,0.3)'}`,
                     padding: '0.75rem 1rem', borderRadius: 8, fontSize: '0.9rem',
@@ -142,8 +142,8 @@ const AdminPayments: React.FC = () => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <span style={{
                         width: 10, height: 10, borderRadius: '50%',
-                        background: settings?.enabled ? '#10b981' : '#f59e0b',
-                        boxShadow: `0 0 8px ${settings?.enabled ? '#10b981' : '#f59e0b'}`,
+                        background: settings?.enabled ? '#99c124' : '#f59e0b',
+                        boxShadow: `0 0 8px ${settings?.enabled ? '#99c124' : '#f59e0b'}`,
                     }} />
                     <span style={{ color: 'var(--text-main)', fontWeight: 600, fontSize: '0.95rem' }}>
                         {settings?.enabled ? 'Razorpay payments are LIVE' : 'Payments in demo mode'}
@@ -217,7 +217,7 @@ const AdminPayments: React.FC = () => {
 
                 <div>
                     <label style={labelStyle}>
-                        Key Secret {settings?.has_key_secret && <span style={{ color: '#10b981', textTransform: 'none' }}>· saved: {settings.key_secret_masked}</span>}
+                        Key Secret {settings?.has_key_secret && <span style={{ color: '#99c124', textTransform: 'none' }}>· saved: {settings.key_secret_masked}</span>}
                     </label>
                     <input
                         type="password"
@@ -231,7 +231,7 @@ const AdminPayments: React.FC = () => {
 
                 <div>
                     <label style={labelStyle}>
-                        Webhook Secret {settings?.has_webhook_secret && <span style={{ color: '#10b981', textTransform: 'none' }}>· saved: {settings.webhook_secret_masked}</span>}
+                        Webhook Secret {settings?.has_webhook_secret && <span style={{ color: '#99c124', textTransform: 'none' }}>· saved: {settings.webhook_secret_masked}</span>}
                     </label>
                     <input
                         type="password"

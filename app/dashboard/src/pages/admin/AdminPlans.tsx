@@ -138,7 +138,7 @@ const AdminPlans: React.FC = () => {
                                         {yearly ? (
                                             <>${yearly.price}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/yr</span>{' '}
                                                 {plan.yearly_discount_percent > 0 && (
-                                                    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#10b981', padding: '0.1rem 0.5rem', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700 }}>
+                                                    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#99c124', padding: '0.1rem 0.5rem', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700 }}>
                                                         {plan.yearly_discount_percent}% off
                                                     </span>
                                                 )}
@@ -148,7 +148,7 @@ const AdminPlans: React.FC = () => {
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.max_requests_per_month.toLocaleString()}</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.max_products.toLocaleString()}</td>
                                     <td style={{ padding: '0.85rem 1rem' }}>
-                                        <span style={{ background: plan.is_active ? 'rgba(16,185,129,0.1)' : 'rgba(107,114,128,0.1)', color: plan.is_active ? '#10b981' : '#6b7280', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600 }}>
+                                        <span style={{ background: plan.is_active ? 'rgba(16,185,129,0.1)' : 'rgba(107,114,128,0.1)', color: plan.is_active ? '#99c124' : '#6b7280', padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600 }}>
                                             {plan.is_active ? 'Active' : 'Inactive'}
                                         </span>
                                     </td>
@@ -177,7 +177,7 @@ const AdminPlans: React.FC = () => {
                             <button onClick={() => setShowModal(false)} style={{ background: 'transparent', color: 'var(--text-muted)', fontSize: '1.25rem', cursor: 'pointer' }}>✕</button>
                         </div>
 
-                        {msg && <div style={{ color: msg.startsWith('✅') ? '#10b981' : '#ef4444', fontSize: '0.87rem' }}>{msg}</div>}
+                        {msg && <div style={{ color: msg.startsWith('✅') ? '#99c124' : '#ef4444', fontSize: '0.87rem' }}>{msg}</div>}
 
                         {([
                             { label: 'Plan Name', key: 'name', type: 'text', placeholder: 'e.g. Starter' },

@@ -8,7 +8,7 @@ interface Tenant {
 }
 
 const statusColor: Record<string, string> = {
-    active: '#10b981', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#6b7280'
+    active: '#99c124', trial: '#f59e0b', suspended: '#ef4444', cancelled: '#6b7280'
 };
 
 const AdminTenants: React.FC = () => {

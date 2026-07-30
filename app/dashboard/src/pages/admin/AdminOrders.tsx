@@ -24,7 +24,7 @@ interface Summary {
 }
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
-    captured:   { color: '#10b981', bg: 'rgba(16,185,129,0.1)',  label: 'Paid' },
+    captured:   { color: '#99c124', bg: 'rgba(16,185,129,0.1)',  label: 'Paid' },
     created:    { color: '#059669', bg: 'rgba(5,150,105,0.1)',  label: 'Initiated' },
     authorized: { color: '#f59e0b', bg: 'rgba(245,158,11,0.1)', label: 'Authorized' },
     failed:     { color: '#ef4444', bg: 'rgba(239,68,68,0.1)',  label: 'Failed' },
@@ -63,7 +63,7 @@ const AdminOrders: React.FC = () => {
 
     const cards = [
         { label: 'Total Orders', value: summary?.total_orders ?? 0, color: '#059669' },
-        { label: 'Total Revenue', value: `${Number(summary?.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#10b981' },
+        { label: 'Total Revenue', value: `${Number(summary?.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#99c124' },
         { label: 'Revenue This Month', value: `${Number(summary?.revenue_this_month || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#f59e0b' },
         { label: 'Failed Payments', value: summary?.failed_count ?? 0, color: '#ef4444' },
     ];

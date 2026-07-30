@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import {
+    LayoutDashboard,
+    Store,
+    Layers,
+    Server,
+    Puzzle,
+    Receipt,
+    CreditCard,
+    Lock,
+    LogOut,
+    ChevronLeft,
+    ChevronRight,
+    Shield,
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const AdminLayout: React.FC = () => {
@@ -10,14 +24,14 @@ const AdminLayout: React.FC = () => {
     const handleLogout = () => { logout(); navigate('/login'); };
 
     const navItems = [
-        { to: '/admin', label: 'Overview', icon: '📊', end: true },
-        { to: '/admin/tenants', label: 'Tenants', icon: '🏪', end: false },
-        { to: '/admin/plans', label: 'Plans', icon: '📋', end: false },
-        { to: '/admin/hosting', label: 'Hosting', icon: '🖥️', end: false },
-        { to: '/admin/modules', label: 'Modules', icon: '🧩', end: false },
-        { to: '/admin/orders', label: 'Orders', icon: '🧾', end: false },
-        { to: '/admin/payments', label: 'Payment Settings', icon: '💳', end: false },
-        { to: '/admin/login-settings', label: 'Sign-in Options', icon: '🔐', end: false },
+        { to: '/admin', label: 'Overview', icon: <LayoutDashboard size={18} />, end: true },
+        { to: '/admin/tenants', label: 'Tenants', icon: <Store size={18} />, end: false },
+        { to: '/admin/plans', label: 'Plans', icon: <Layers size={18} />, end: false },
+        { to: '/admin/hosting', label: 'Hosting', icon: <Server size={18} />, end: false },
+        { to: '/admin/modules', label: 'Modules', icon: <Puzzle size={18} />, end: false },
+        { to: '/admin/orders', label: 'Orders', icon: <Receipt size={18} />, end: false },
+        { to: '/admin/payments', label: 'Payment Settings', icon: <CreditCard size={18} />, end: false },
+        { to: '/admin/login-settings', label: 'Sign-in Options', icon: <Lock size={18} />, end: false },
     ];
 
     return (
@@ -53,7 +67,9 @@ const AdminLayout: React.FC = () => {
                             background: isActive ? 'rgba(5,150,105,0.10)' : 'transparent',
                             color: isActive ? 'var(--primary)' : 'var(--text-muted)',
                         })}>
-                            <span style={{ fontSize: 18, flexShrink: 0 }}>{item.icon}</span>
+                            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                {item.icon}
+                            </span>
                             {!collapsed && item.label}
                         </NavLink>
                     ))}
@@ -64,17 +80,21 @@ const AdminLayout: React.FC = () => {
                     <button onClick={() => setCollapsed(c => !c)} style={{
                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                         padding: '0.6rem 0.75rem', borderRadius: 8, background: 'transparent',
-                        color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, cursor: 'pointer',
+                        color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, cursor: 'pointer', border: 'none',
                     }}>
-                        <span style={{ fontSize: 18 }}>{collapsed ? '→' : '←'}</span>
+                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                        </span>
                         {!collapsed && 'Collapse'}
                     </button>
                     <button onClick={handleLogout} style={{
                         display: 'flex', alignItems: 'center', gap: '0.75rem',
                         padding: '0.6rem 0.75rem', borderRadius: 8, background: 'transparent',
-                        color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, cursor: 'pointer',
+                        color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 500, cursor: 'pointer', border: 'none',
                     }}>
-                        <span style={{ fontSize: 18 }}>🚪</span>
+                        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                            <LogOut size={18} />
+                        </span>
                         {!collapsed && 'Logout'}
                     </button>
                 </div>
@@ -95,7 +115,7 @@ const AdminLayout: React.FC = () => {
                         background: 'rgba(5,150,105,0.08)', border: '1px solid rgba(5,150,105,0.3)',
                         padding: '0.25rem 0.75rem', borderRadius: 20, fontSize: '0.8rem', color: 'var(--primary)',
                     }}>
-                        ⚡ Admin Mode
+                        <Shield size={14} /> Admin Mode
                     </div>
                 </header>
                 <main style={{ flex: 1, padding: '2rem', overflowY: 'auto' }}>
