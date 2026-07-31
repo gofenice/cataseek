@@ -54,6 +54,11 @@ export async function ensurePaymentTables() {
     try { await query("ALTER TABLE subscriptions ADD COLUMN razorpay_subscription_id VARCHAR(64) NULL"); } catch (_) { /* exists */ }
     try { await query("ALTER TABLE subscriptions ADD INDEX idx_rzp_sub (razorpay_subscription_id)"); } catch (_) { /* exists */ }
 
+    // Deferred downgrades: the lower plan is recorded here and only swapped in
+    // at current_period_end — see getPlanChangeCredit / applyDuePlanChange in billing.routes.
+    try { await query("ALTER TABLE subscriptions ADD COLUMN pending_plan_id INT NULL"); } catch (_) { /* exists */ }
+    try { await query("ALTER TABLE subscriptions ADD COLUMN pending_plan_change_at DATETIME NULL"); } catch (_) { /* exists */ }
+
     // Yearly billing: monthly rows are the source of truth, yearly siblings
     // (linked via parent_plan_id) are auto-generated — see plan-sync.service.
     try { await query("ALTER TABLE plans ADD COLUMN yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0"); } catch (_) { /* exists */ }

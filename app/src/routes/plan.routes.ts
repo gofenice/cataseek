@@ -3,6 +3,7 @@ import { query } from '../config/database';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
 import { getRazorpayConfig } from '../services/payment-settings.service';
 import { ensurePaymentTables } from '../services/razorpay.service';
+import { applyDuePlanChange } from './billing.routes';
 import Stripe from 'stripe';
 
 const router = express.Router();
@@ -218,11 +219,17 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 // Get current subscription
 router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
   try {
+    // Demo-mode subscriptions have no gateway to fire a renewal webhook — apply
+    // any scheduled downgrade whose current_period_end has already passed.
+    await applyDuePlanChange(req.user.id);
+
     const subscription: any = await query(
-      `SELECT s.*, p.name as plan_name, p.price, p.billing_period, 
-              p.max_products, p.max_requests_per_month, p.features
+      `SELECT s.*, p.name as plan_name, p.price, p.billing_period,
+              p.max_products, p.max_requests_per_month, p.features,
+              pp.name AS pending_plan_name, pp.price AS pending_plan_price, pp.billing_period AS pending_plan_billing_period
        FROM subscriptions s
        JOIN plans p ON s.plan_id = p.id
+       LEFT JOIN plans pp ON s.pending_plan_id = pp.id
        WHERE s.tenant_id = ? AND s.status = 'active'
        ORDER BY s.current_period_end DESC
        LIMIT 1`,
@@ -314,6 +321,10 @@ router.post('/demo-subscribe', authenticateJWT, async (req: AuthRequest, res) =>
 router.get('/usage', authenticateJWT, async (req: AuthRequest, res) => {
   try {
     const tenantId = req.user.id;
+
+    // Same reconciliation as /subscription — keeps demo-mode limits correct once a
+    // scheduled downgrade's renewal date has passed.
+    await applyDuePlanChange(tenantId);
 
     // Current month usage
     const usageRows: any = await query(

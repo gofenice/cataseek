@@ -26,6 +26,10 @@ interface Subscription {
     status: string;
     current_period_end: string;
     max_requests_per_month: number;
+    pending_plan_id?: number | null;
+    pending_plan_name?: string | null;
+    pending_plan_price?: number | null;
+    pending_plan_billing_period?: string | null;
 }
 
 interface Usage {
@@ -108,6 +112,11 @@ const loadRazorpayScript = (): Promise<void> => {
     }
     return razorpayScriptPromise;
 };
+
+// Mirrors billing.routes.ts effectiveMonthlyPrice — used to decide whether a
+// plan selection is an upgrade (immediate, prorated) or a downgrade (deferred).
+const effectiveMonthlyPrice = (price: number, billingPeriod: string) =>
+    Number(price) / (billingPeriod === 'yearly' ? 12 : 1);
 
 const fmt = (d: string | null) =>
     d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
@@ -248,11 +257,20 @@ const Billing: React.FC = () => {
         });
     };
 
+    const isDowngrade = (plan: Plan) =>
+        !!subscription && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(subscription.price, subscription.billing_period);
+
     const handleSelect = async (planId: number) => {
         setSubscribing(planId);
         setMessage('');
         try {
-            if (payConfig?.gateway === 'razorpay') {
+            const plan = plans.find(p => p.id === planId);
+            if (plan && isDowngrade(plan)) {
+                // Deferred downgrade: no checkout, no proration — just schedule the
+                // swap for current_period_end. Customer keeps today's plan until then.
+                const res = await api.post('/billing/downgrade', { planId });
+                setMessage(`✅ ${res.data.message}`);
+            } else if (payConfig?.gateway === 'razorpay') {
                 await handleRazorpayCheckout(planId);
             } else {
                 const res = await api.post('/billing/subscribe', { planId });
@@ -449,6 +467,11 @@ const Billing: React.FC = () => {
                             <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                 <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
                             </div>
+                            {subscription.pending_plan_id && (
+                                <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <Clock size={12} /> Downgrading to {subscription.pending_plan_name} on {fmt(subscription.current_period_end)}
+                                </div>
+                            )}
                             <button
                                 onClick={handleCancel}
                                 disabled={cancelling}
@@ -519,6 +542,7 @@ const Billing: React.FC = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 320px))', gap: '1.25rem', alignItems: 'stretch' }}>
                     {displayPlans.map((plan, i) => {
                         const isCurrent = plan.id === currentPlanId;
+                        const isScheduled = plan.id === subscription?.pending_plan_id;
                         const isPopular = i === 1;
                         const features  = parseFeatures(plan.features);
                         return (
@@ -532,6 +556,9 @@ const Billing: React.FC = () => {
                                 )}
                                 {isCurrent && (
                                     <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: 'var(--text-main)', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>CURRENT PLAN</div>
+                                )}
+                                {isScheduled && !isCurrent && (
+                                    <div style={{ position: 'absolute', top: -10, left: '50%', transform: 'translateX(-50%)', background: '#f59e0b', color: '#fff', fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.75rem', borderRadius: 99 }}>SCHEDULED</div>
                                 )}
                                 <div>
                                     <div style={{ fontSize: '1.1rem', fontWeight: 700, color: 'var(--text-main)' }}>{plan.name}</div>
@@ -550,17 +577,21 @@ const Billing: React.FC = () => {
                                 </ul>
                                 <button
                                     onClick={() => handleSelect(plan.id)}
-                                    disabled={isCurrent || subscribing !== null}
+                                    disabled={isCurrent || isScheduled || subscribing !== null}
                                     style={{
                                         padding: '0.7rem', borderRadius: 8, fontWeight: 600, fontSize: '0.9rem',
-                                        cursor: isCurrent ? 'default' : 'pointer',
-                                        background: isCurrent ? 'var(--text-main)' : 'var(--primary)',
-                                        color: isCurrent ? '#ffffff' : '#fff',
+                                        cursor: isCurrent || isScheduled ? 'default' : 'pointer',
+                                        background: isCurrent ? 'var(--text-main)' : isScheduled ? 'rgba(245,158,11,0.12)' : 'var(--primary)',
+                                        color: isCurrent ? '#ffffff' : isScheduled ? '#f59e0b' : '#fff',
                                         opacity: subscribing !== null && subscribing !== plan.id ? 0.5 : 1,
                                         transition: 'all 0.2s',
                                     }}
                                 >
-                                    {isCurrent ? 'Current Plan' : subscribing === plan.id ? 'Processing…' : payConfig?.gateway === 'razorpay' ? 'Subscribe Now' : 'Select Plan'}
+                                    {isCurrent ? 'Current Plan'
+                                        : isScheduled ? 'Scheduled'
+                                        : subscribing === plan.id ? 'Processing…'
+                                        : isDowngrade(plan) ? 'Downgrade'
+                                        : payConfig?.gateway === 'razorpay' ? 'Subscribe Now' : 'Select Plan'}
                                 </button>
                             </div>
                         );

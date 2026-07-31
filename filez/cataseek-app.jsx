@@ -3,7 +3,7 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // The Cataseek app (login / signup / dashboard).
 // Local dev: http://localhost:3000 — Production: the tenant dashboard subdomain
-const DASHBOARD_URL = "https://admin.cataseek.com";
+const DASHBOARD_URL = "http://localhost:8094";
 
 /* ============================================================
    TWEAK DEFAULTS
@@ -114,9 +114,9 @@ const Nav = () => {
       <div className="wrap nav">
         <Logo />
         <div className="nav-links">
-          <a className="nav-link">Features</a>
-          <a className="nav-link">Pricing</a>
-          <a className="nav-link">Integrations</a>
+          <a className="nav-link" href="#features">Features</a>
+          <a className="nav-link" href="#integrations">Integrations</a>
+          <a className="nav-link" href="#pricing">Pricing</a>
           <a className="nav-link">Docs</a>
           <a className="nav-link">Changelog</a>
         </div>
@@ -577,7 +577,7 @@ const Steps = () => {
     { n: "03", title: "Drop in the search bar", body: "Replace your default search with a single shortcode or block. Theme variables do the rest." }
   ];
   return (
-    <section style={{ background: "var(--bg-2)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
+    <section id="integrations" style={{ background: "var(--bg-2)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
       <div className="wrap">
         <div className="section-head">
           <span className="eyebrow"><span className="dot"/>How it works</span>
@@ -658,6 +658,7 @@ const Pricing = () => {
   // Live plans from the Cataseek app — falls back to the static PLANS if the API is unreachable
   const [livePlans, setLivePlans] = useState(null);
   const [currency, setCurrency] = useState("USD");
+  const [billingPeriod, setBillingPeriod] = useState("monthly");
 
   useEffect(() => {
     fetch(DASHBOARD_URL + "/api/plans/plans")
@@ -665,26 +666,40 @@ const Pricing = () => {
       .then(data => {
         if (!data.plans || data.plans.length === 0) return;
         if (data.currency) setCurrency(data.currency);
-        const parseFeats = (f) => { try { return Array.isArray(f) ? f : JSON.parse(f || "[]"); } catch { return []; } };
-        setLivePlans(data.plans.map((p, i) => ({
-          name: p.name,
-          blurb: p.description || "",
-          price: Number(p.price),
-          period: p.billing_period === "yearly" ? "year" : "month",
-          cta: "Start free trial",
-          featured: i === 1 && data.plans.length >= 3, // middle plan = highlighted
-          feats: [
-            `Up to ${Number(p.max_products).toLocaleString()} SKUs`,
-            `${Number(p.max_requests_per_month).toLocaleString()} searches / month`,
-            ...parseFeats(p.features),
-          ],
-        })));
+        setLivePlans(data.plans);
       })
       .catch(() => { /* keep static fallback */ });
   }, []);
 
   const symbol = CURRENCY_SYMBOLS[currency] || "$";
-  const plansToShow = livePlans || PLANS.map(p => ({ ...p, period: "month" }));
+  const parseFeats = (f) => { try { return Array.isArray(f) ? f : JSON.parse(f || "[]"); } catch { return []; } };
+
+  // Group into tiers by their monthly root; the toggle swaps in each tier's
+  // yearly sibling (linked via parent_plan_id) when selected.
+  const rootPlans = livePlans ? livePlans.filter(p => p.parent_plan_id == null) : null;
+  const hasYearlyOption = rootPlans ? rootPlans.some(root => livePlans.some(p => p.parent_plan_id === root.id)) : false;
+  const maxDiscount = rootPlans ? Math.max(0, ...rootPlans.map(p => Number(p.yearly_discount_percent) || 0)) : 0;
+
+  const plansToShow = rootPlans
+    ? rootPlans.map((root, i) => {
+        const chosen = billingPeriod === "yearly"
+          ? (livePlans.find(p => p.parent_plan_id === root.id) || root)
+          : root;
+        return {
+          name: chosen.name,
+          blurb: chosen.description || "",
+          price: Number(chosen.price),
+          period: chosen.billing_period === "yearly" ? "year" : "month",
+          cta: "Start free trial",
+          featured: i === 1 && rootPlans.length >= 3,
+          feats: [
+            `Sync up to ${Number(chosen.max_products).toLocaleString()} products`,
+            `${Number(chosen.max_requests_per_month).toLocaleString()} searches / month`,
+            ...parseFeats(chosen.features),
+          ],
+        };
+      })
+    : PLANS.map(p => ({ ...p, period: "month" }));
   const sym = livePlans ? symbol : "€";
 
   return (
@@ -697,6 +712,30 @@ const Pricing = () => {
               One plan per store. <span className="serif-i" style={{ color: "var(--ink-3)" }}>Cancel any month.</span>
             </h2>
           </div>
+          {hasYearlyOption && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 14, fontWeight: billingPeriod === "monthly" ? 600 : 400, color: billingPeriod === "monthly" ? "var(--ink)" : "var(--ink-3)" }}>Monthly</span>
+              <button
+                onClick={() => setBillingPeriod(p => p === "monthly" ? "yearly" : "monthly")}
+                aria-label="Toggle yearly billing"
+                style={{
+                  position: "relative", width: 44, height: 24, borderRadius: 99, border: "none", cursor: "pointer",
+                  background: billingPeriod === "yearly" ? "var(--accent)" : "var(--line)", transition: "background 0.2s", padding: 0,
+                }}
+              >
+                <span style={{
+                  position: "absolute", top: 3, left: billingPeriod === "yearly" ? 23 : 3,
+                  width: 18, height: 18, borderRadius: "50%", background: "#fff", transition: "left 0.2s",
+                }} />
+              </button>
+              <span style={{ fontSize: 14, fontWeight: billingPeriod === "yearly" ? 600 : 400, color: billingPeriod === "yearly" ? "var(--ink)" : "var(--ink-3)" }}>Yearly</span>
+              {maxDiscount > 0 && (
+                <span style={{ background: "var(--accent)", color: "var(--accent-ink)", fontFamily: "'Geist Mono', monospace", fontSize: 10.5, padding: "4px 8px", borderRadius: 999, letterSpacing: ".06em", textTransform: "uppercase" }}>
+                  {maxDiscount}% OFF
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="price-grid">
@@ -747,7 +786,7 @@ const FAQS = [
   { q: "Do you support PrestaShop and WooCommerce equally?",
     a: "Yes. Both plugins are first-class and ship feature parity. Other platforms — Shopify, Magento, BigCommerce, OpenCart — are on the public roadmap for 2026." },
   { q: "Can I cancel any time?",
-    a: "Yes. Subscriptions are month-to-month with no lock-in. Annual plans get a 20% discount but can still be cancelled at the end of the current period." },
+    a: "Yes. Subscriptions are month-to-month with no lock-in. Annual plans get a discount over paying monthly (see the toggle on the pricing section above) and can still be cancelled at the end of the current period." },
   { q: "What happens to my data if I cancel?",
     a: "Your index is purged within 24 hours of cancellation. We never sell or share search data, and we'll export your analytics on request." }
 ];

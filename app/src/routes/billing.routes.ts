@@ -11,6 +11,7 @@ import {
     recordOrder,
     ensurePaymentTables,
     getRazorpayClient,
+    ensureRazorpayPlan,
 } from '../services/razorpay.service';
 import { activateHostingSubscription } from '../services/hosting.service';
 
@@ -45,6 +46,25 @@ async function getPlanChangeCredit(tenantId: number): Promise<{ credit: number; 
 
     const credit = Number(sub.price) * ((end - now) / (end - start));
     return { credit: Math.round(credit * 100) / 100, oldPlanName: sub.name };
+}
+
+// ─── Helper: normalize price to a monthly-equivalent for upgrade/downgrade comparison ──
+function effectiveMonthlyPrice(price: number | string, billingPeriod: string): number {
+    return Number(price) / (billingPeriod === 'yearly' ? 12 : 1);
+}
+
+// ─── Helper: this tenant's current active subscription + plan details ─────────
+async function getActiveSubscriptionWithPlan(tenantId: number): Promise<any | null> {
+    const subs: any = await query(
+        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id,
+                p.id AS plan_id, p.name AS plan_name, p.price, p.billing_period
+         FROM subscriptions s
+         JOIN plans p ON s.plan_id = p.id
+         WHERE s.tenant_id = ? AND s.status = 'active'
+         ORDER BY s.current_period_end DESC LIMIT 1`,
+        [tenantId]
+    );
+    return subs && subs.length > 0 ? subs[0] : null;
 }
 
 // ─── Ensure invoices table exists (lazy migration) ────────────────────────────
@@ -179,6 +199,36 @@ async function activateSubscription(opts: {
     return { invoiceNumber, periodStart, periodEnd, tenant };
 }
 
+// ─── Deferred downgrades: apply a scheduled plan swap once current_period_end has passed ──
+// Only for subscriptions with NO gateway subscription (demo mode / no recurring engine).
+// Razorpay-linked subscriptions are switched by the gateway itself (schedule_change_at:
+// 'cycle_end', set in POST /downgrade) and picked up by the 'subscription.charged' webhook —
+// running this for those too would double-invoice the renewal.
+export async function applyDuePlanChange(tenantId: number): Promise<void> {
+    const sub = await getActiveSubscriptionWithPlan(tenantId);
+    if (!sub) return;
+
+    const subs: any = await query(
+        'SELECT pending_plan_id, pending_plan_change_at FROM subscriptions WHERE id = ?',
+        [sub.id]
+    );
+    const pendingPlanId = subs?.[0]?.pending_plan_id;
+    const pendingChangeAt = subs?.[0]?.pending_plan_change_at;
+    if (!pendingPlanId || !pendingChangeAt) return;
+    if (sub.razorpay_subscription_id) return; // gateway-managed — webhook handles it
+    if (new Date(pendingChangeAt).getTime() > Date.now()) return;
+
+    const plans: any = await query('SELECT * FROM plans WHERE id = ?', [pendingPlanId]);
+    if (!plans || plans.length === 0) return;
+
+    await activateSubscription({
+        tenantId,
+        plan: plans[0],
+        currency: 'USD',
+        billingReason: 'subscription_downgrade',
+    });
+}
+
 // ─── GET /api/billing/payment-config ──────────────────────────────────────────
 // Tells the dashboard which gateway to use for checkout
 router.get('/payment-config', authenticateJWT, async (req: AuthRequest, res: Response) => {
@@ -308,6 +358,13 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
         const plan = plans[0];
+
+        // Downgrades are deferred to current_period_end (POST /downgrade), not
+        // switched immediately — this endpoint is upgrade/new-subscription only.
+        const existingSub = await getActiveSubscriptionWithPlan(tenantId);
+        if (existingSub && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(existingSub.price, existingSub.billing_period)) {
+            return res.status(400).json({ error: 'Use POST /api/billing/downgrade to schedule a plan downgrade.' });
+        }
 
         const tenants: any = await query('SELECT id, store_name, email FROM tenants WHERE id = ?', [tenantId]);
         const tenant = tenants[0];
@@ -623,6 +680,81 @@ router.post('/razorpay/webhook', async (req: AuthRequest, res: Response) => {
     }
 });
 
+// ─── POST /api/billing/downgrade ───────────────────────────────────────────────
+// Defers a plan-change to a cheaper plan until current_period_end instead of
+// switching immediately: no proration credit, no invoice, no refund. The
+// customer keeps their current plan/features/limits until the renewal date,
+// at which point the subscription switches over automatically and billing
+// resumes at the new (lower) plan price.
+router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Response) => {
+    try {
+        const { planId } = req.body;
+        const tenantId = req.user.id;
+
+        if (!planId) return res.status(400).json({ error: 'planId is required' });
+
+        const newPlans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
+        if (!newPlans || newPlans.length === 0) return res.status(404).json({ error: 'Plan not found' });
+        const newPlan = newPlans[0];
+
+        const sub = await getActiveSubscriptionWithPlan(tenantId);
+        if (!sub) return res.status(404).json({ error: 'No active subscription found' });
+
+        if (Number(newPlan.id) === Number(sub.plan_id)) {
+            return res.status(400).json({ error: 'You are already on this plan' });
+        }
+
+        const currentEffective = effectiveMonthlyPrice(sub.price, sub.billing_period);
+        const newEffective = effectiveMonthlyPrice(newPlan.price, newPlan.billing_period);
+        if (newEffective >= currentEffective) {
+            return res.status(400).json({ error: 'This is not a downgrade — use the regular checkout to switch plans.' });
+        }
+
+        // Gateway-linked subscription: schedule the plan swap at Razorpay too, at
+        // cycle end, so the next auto-charge bills the new (lower) plan instead of
+        // the current one. Notes carry the new plan id so the renewal webhook
+        // activates the right plan locally when it fires.
+        if (sub.razorpay_subscription_id) {
+            try {
+                const { client } = await getRazorpayClient();
+                const rzpPlanId = await ensureRazorpayPlan(newPlan);
+                const tenants: any = await query('SELECT store_name FROM tenants WHERE id = ?', [tenantId]);
+                await client.subscriptions.update(sub.razorpay_subscription_id, {
+                    plan_id: rzpPlanId,
+                    schedule_change_at: 'cycle_end',
+                    notes: {
+                        tenant_id: String(tenantId),
+                        plan_id: String(newPlan.id),
+                        store_name: tenants?.[0]?.store_name || '',
+                        product: 'search',
+                    },
+                });
+            } catch (e: any) {
+                console.error('Razorpay downgrade schedule error:', e?.error?.description || e?.message);
+                return res.status(500).json({ error: 'Could not schedule the downgrade with the payment gateway. Please try again.' });
+            }
+        }
+
+        await query(
+            'UPDATE subscriptions SET pending_plan_id = ?, pending_plan_change_at = ? WHERE id = ?',
+            [newPlan.id, sub.current_period_end, sub.id]
+        );
+
+        const renewalDate = new Date(sub.current_period_end).toLocaleDateString('en-US', {
+            year: 'numeric', month: 'long', day: 'numeric',
+        });
+
+        res.json({
+            message: `Your downgrade to ${newPlan.name} has been scheduled and will take effect on ${renewalDate}. You will continue to enjoy your current plan benefits until then.`,
+            scheduledPlan: { id: newPlan.id, name: newPlan.name, price: newPlan.price, billing_period: newPlan.billing_period },
+            effectiveDate: sub.current_period_end,
+        });
+    } catch (error) {
+        console.error('Schedule downgrade error:', error);
+        res.status(500).json({ error: 'Failed to schedule downgrade' });
+    }
+});
+
 // ─── POST /api/billing/cancel ─────────────────────────────────────────────────
 // Cancel the active subscription (at Razorpay too, if linked)
 router.post('/cancel', authenticateJWT, async (req: AuthRequest, res: Response) => {
@@ -671,6 +803,13 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
         const plan = plans[0];
+
+        // Downgrades are deferred to current_period_end (POST /downgrade), not
+        // switched immediately — this endpoint is upgrade/new-subscription only.
+        const existingSub = await getActiveSubscriptionWithPlan(tenantId);
+        if (existingSub && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(existingSub.price, existingSub.billing_period)) {
+            return res.status(400).json({ error: 'Use POST /api/billing/downgrade to schedule a plan downgrade.' });
+        }
 
         // Same one-time plan-change credit as the Razorpay flow
         const { credit, oldPlanName } = await getPlanChangeCredit(tenantId);
