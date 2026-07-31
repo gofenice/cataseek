@@ -142,10 +142,119 @@
   @keyframes tileIn { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
   .tile-in { animation: tileIn .5s cubic-bezier(.2,.7,.2,1) both; }
 
-  /* Responsive */
-  @media (max-width: 900px) {
+  /* Responsive Breakpoints & Overrides */
+  html, body { overflow-x: hidden; width: 100%; }
+
+  .hero-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.05fr;
+    gap: 56px;
+    align-items: center;
+  }
+
+  .demo-products-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+
+  .integrations-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 0;
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    background: var(--card);
+    overflow: hidden;
+  }
+  .integration-tile {
+    padding: 24px 20px;
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-height: 120px;
+    position: relative;
+  }
+  .integration-tile:last-child {
+    border-right: none;
+  }
+
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  .steps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+
+  .faq-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 56px;
+  }
+  .faq-left {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    position: sticky;
+    top: 100px;
+    align-self: start;
+  }
+
+  .cta-card {
+    background: var(--ink);
+    color: var(--bg);
+    border-radius: 22px;
+    padding: 72px 56px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .footer-grid {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(4, 1fr);
+    gap: 40px;
+  }
+
+  @media (max-width: 960px) {
+    .hero-grid { grid-template-columns: 1fr; gap: 36px; }
     .nav-links { display: none; }
-    section { padding: 72px 0; }
+    section { padding: 64px 0; }
+    .features-grid { grid-template-columns: repeat(2, 1fr); }
+    .integrations-grid { grid-template-columns: repeat(3, 1fr); }
+    .integration-tile { border-bottom: 1px solid var(--line); }
+    .integration-tile:nth-child(3n) { border-right: none; }
+    .footer-grid { grid-template-columns: repeat(3, 1fr); gap: 36px 24px; }
+    .footer-grid > div:first-child { grid-column: 1 / -1; }
+    .faq-grid { grid-template-columns: 1fr; gap: 36px; }
+    .faq-left { position: static !important; }
+    .cta-card { padding: 48px 36px; }
+  }
+
+  @media (max-width: 640px) {
+    .wrap { padding: 0 18px; }
+    section { padding: 48px 0; }
+    .features-grid { grid-template-columns: 1fr; }
+    .steps-grid { grid-template-columns: 1fr; gap: 28px; }
+    .integrations-grid { grid-template-columns: repeat(2, 1fr); }
+    .integration-tile:nth-child(3n) { border-right: 1px solid var(--line); }
+    .integration-tile:nth-child(2n) { border-right: none; }
+    .footer-grid { grid-template-columns: repeat(2, 1fr); gap: 32px 16px; }
+    .cta-card { padding: 32px 20px; }
+    .btn-lg { padding: 11px 16px; font-size: 13.5px; }
+    .section-head h2 { font-size: clamp(26px, 7.5vw, 36px); }
+    .demo-products-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 440px) {
+    .nav-btn-ghost { display: none; }
+    .footer-grid { grid-template-columns: 1fr; }
+    .cta-card { padding: 28px 16px; }
   }
 
   /* ── Polish ───────────────────────────────────────────── */

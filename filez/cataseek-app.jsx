@@ -3,31 +3,38 @@ const { useState, useEffect, useMemo, useRef } = React;
 
 // The Cataseek app (login / signup / dashboard).
 // Local dev: http://localhost:3000 — Production: the tenant dashboard subdomain
-const DASHBOARD_URL = "http://localhost:8094";
+const DASHBOARD_URL = "https://console.cataseek.com";
 
 /* ============================================================
    TWEAK DEFAULTS
    ============================================================ */
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "accent": "#C0E457",
+  "accent": "#99C124",
   "accentMode": "lime",
   "headlineStyle": "sans"
 }/*EDITMODE-END*/;
 
 const ACCENT_PRESETS = {
-  lime:    { value: "#C0E457", label: "Lime"   },
-  ember:   { value: "#FF6A3D", label: "Ember"  },
-  cobalt:  { value: "#3D6AFF", label: "Cobalt" },
-  sand:    { value: "#E9D7A2", label: "Sand"   }
+  lime: { value: "#99C124", label: "Lime" },
+  ember: { value: "#FF6A3D", label: "Ember" },
+  cobalt: { value: "#3D6AFF", label: "Cobalt" },
+  sand: { value: "#E9D7A2", label: "Sand" }
 };
 
 /* ============================================================
    LOGO
    ============================================================ */
-const Logo = ({ size = 22, color }) => (
-  /* light pages use the dark wordmark; pass any `color` to get the white variant (dark footer) */
-  <img src={color ? "logo-white.png" : "logo.png"} alt="Cataseek" style={{ height: size, display: "block" }} />
-);
+const Logo = ({ size, darkSize = 22, whiteSize = 22, width, color, style }) => {
+  /* Use explicit `size` if passed; otherwise fallback to `whiteSize` for logo-white.png and `darkSize` for logo.png */
+  const logoHeight = size || (color ? whiteSize : darkSize);
+  return (
+    <img
+      src={color ? "logo-white.png" : "logo.png"}
+      alt="Cataseek"
+      style={{ height: logoHeight, width: width || "auto", display: "block", ...style }}
+    />
+  );
+};
 
 /* ============================================================
    ICONS (small, single-stroke)
@@ -35,66 +42,72 @@ const Logo = ({ size = 22, color }) => (
 const Icon = {
   arrow: (p) => (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" {...p}>
-      <path d="M3 7h8m-3-3 3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="M3 7h8m-3-3 3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   check: (p) => (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" {...p}>
-      <path d="m3 7.5 2.5 2.5L11 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+      <path d="m3 7.5 2.5 2.5L11 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
   plus: (p) => (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" {...p}>
-      <path d="M7 3v8M3 7h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="M7 3v8M3 7h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
   bolt: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <path d="M9 1 3 9h4l-1 6 6-8H8l1-6Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="M9 1 3 9h4l-1 6 6-8H8l1-6Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   ),
   device: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <rect x="2" y="3" width="9" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>
-      <rect x="9" y="6" width="5" height="8" rx="1.2" stroke="currentColor" strokeWidth="1.4" fill="var(--card)"/>
+      <rect x="2" y="3" width="9" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4" />
+      <rect x="9" y="6" width="5" height="8" rx="1.2" stroke="currentColor" strokeWidth="1.4" fill="var(--card)" />
     </svg>
   ),
   brain: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <circle cx="5" cy="8" r="3" stroke="currentColor" strokeWidth="1.4"/>
-      <circle cx="11" cy="8" r="3" stroke="currentColor" strokeWidth="1.4"/>
-      <path d="M5 5v6M11 5v6" stroke="currentColor" strokeWidth="1.4"/>
+      <circle cx="5" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
+      <circle cx="11" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M5 5v6M11 5v6" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   ),
   chart: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <path d="M2 13h12M4 11V7m3 4V4m3 7V8m3 3V6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+      <path d="M2 13h12M4 11V7m3 4V4m3 7V8m3 3V6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   ),
   filter: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+      <path d="M2 4h12M4 8h8M6 12h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   ),
   layers: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <path d="m8 2 6 3-6 3-6-3 6-3ZM2 11l6 3 6-3M2 8l6 3 6-3" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="m8 2 6 3-6 3-6-3 6-3ZM2 11l6 3 6-3M2 8l6 3 6-3" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   ),
   shield: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <path d="M8 1 3 3v5c0 3 2.5 5.5 5 7 2.5-1.5 5-4 5-7V3L8 1Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      <path d="M8 1 3 3v5c0 3 2.5 5.5 5 7 2.5-1.5 5-4 5-7V3L8 1Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   ),
   search: (p) => (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
-      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5"/>
-      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <circle cx="7" cy="7" r="4.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   ),
   close: (p) => (
     <svg width="12" height="12" viewBox="0 0 12 12" fill="none" {...p}>
-      <path d="m3 3 6 6m0-6-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+      <path d="m3 3 6 6m0-6-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+  globe: (p) => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" {...p}>
+      <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M2 8h12M8 2a9 9 0 0 1 0 12M8 2a9 9 0 0 0 0 12" stroke="currentColor" strokeWidth="1.4" />
     </svg>
   ),
 };
@@ -121,7 +134,7 @@ const Nav = () => {
           <a className="nav-link">Changelog</a>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <a href={DASHBOARD_URL + "/login"} className="btn btn-ghost" style={{ padding: "8px 12px" }}>Sign in</a>
+          <a href={DASHBOARD_URL + "/login"} className="btn btn-ghost nav-btn-ghost" style={{ padding: "8px 12px" }}>Sign in</a>
           <a href={DASHBOARD_URL + "/register"} className="btn btn-primary">Start free trial</a>
         </div>
       </div>
@@ -135,28 +148,28 @@ const Nav = () => {
 const IMG = (id, w = 320) => `https://images.unsplash.com/photo-${id}?w=${w}&auto=format&fit=crop&q=80`;
 
 const SAMPLE_PRODUCTS = [
-  { name: "Linen Camp Shirt — Sand",  price: "€48",  tag: "Apparel",   stock: "In stock",  img: IMG("1620799140408-edc6dcb6d633"), sizes: ["XS","S","M"],     colors: ["sand"]   },
-  { name: "Linen Camp Shirt — Olive", price: "€48",  tag: "Apparel",   stock: "In stock",  img: IMG("1591047139829-d91aecb6caea"), sizes: ["S","M","L","XL","2XL"], colors: ["olive"]  },
-  { name: "Linen Trouser — Bone",     price: "€72",  tag: "Apparel",   stock: "Low stock", img: IMG("1594633312681-425c7b97ccd1"), sizes: ["M","L"],         colors: ["bone"]   },
-  { name: "Linen Wrap Dress",         price: "€118", tag: "Apparel",   stock: "In stock",  img: IMG("1490481651871-ab68de25d43d"), sizes: ["S","M"],          colors: ["ecru"]   },
-  { name: "Cream Knit Sweater",       price: "€96",  tag: "Apparel",   stock: "In stock",  img: IMG("1612722432474-b971cdcea546"), sizes: ["S","M","L"],     colors: ["cream"]  },
-  { name: "Wide-leg Trouser",         price: "€72",  tag: "Apparel",   stock: "In stock",  img: IMG("1434389677669-e08b4cac3105"), sizes: ["S","M","L","2XL"], colors: ["black"]  },
-  { name: "Linen Tunic — Ecru",       price: "€86",  tag: "Apparel",   stock: "In stock",  img: IMG("1521572163474-6864f9cf17ab"), sizes: ["L","XL","2XL"],     colors: ["ecru"]   },
-  { name: "Linen Set — Olive",        price: "€120", tag: "Apparel",   stock: "Low stock", img: IMG("1602810318383-e386cc2a3ccf"), sizes: ["S","M"],          colors: ["olive"]  },
-  { name: "Linen Bucket Hat",         price: "€32",  tag: "Accessory", stock: "In stock",  img: IMG("1556306535-38febf6782e7"),    sizes: ["OS"],             colors: ["sand"]   },
-  { name: "Cotton Tote — Natural",    price: "€18",  tag: "Accessory", stock: "In stock",  img: IMG("1597481499750-3e6b22637e12"), sizes: ["OS"],             colors: ["ecru"]   },
-  { name: "Wool Beanie — Stone",      price: "€28",  tag: "Accessory", stock: "In stock",  img: IMG("1576871337622-98d48d1cf531"), sizes: ["OS"],             colors: ["stone"]  },
-  { name: "Leather Belt — Tan",       price: "€54",  tag: "Accessory", stock: "In stock",  img: IMG("1624222247344-550fb60583dc"), sizes: ["S","M","L"],     colors: ["tan"]    }
+  { name: "Linen Camp Shirt — Sand", price: "€48", tag: "Apparel", stock: "In stock", img: IMG("1620799140408-edc6dcb6d633"), sizes: ["XS", "S", "M"], colors: ["sand"] },
+  { name: "Linen Camp Shirt — Olive", price: "€48", tag: "Apparel", stock: "In stock", img: IMG("1591047139829-d91aecb6caea"), sizes: ["S", "M", "L", "XL", "2XL"], colors: ["olive"] },
+  { name: "Linen Trouser — Bone", price: "€72", tag: "Apparel", stock: "Low stock", img: IMG("1594633312681-425c7b97ccd1"), sizes: ["M", "L"], colors: ["bone"] },
+  { name: "Linen Wrap Dress", price: "€118", tag: "Apparel", stock: "In stock", img: IMG("1490481651871-ab68de25d43d"), sizes: ["S", "M"], colors: ["ecru"] },
+  { name: "Cream Knit Sweater", price: "€96", tag: "Apparel", stock: "In stock", img: IMG("1612722432474-b971cdcea546"), sizes: ["S", "M", "L"], colors: ["cream"] },
+  { name: "Wide-leg Trouser", price: "€72", tag: "Apparel", stock: "In stock", img: IMG("1434389677669-e08b4cac3105"), sizes: ["S", "M", "L", "2XL"], colors: ["black"] },
+  { name: "Linen Tunic — Ecru", price: "€86", tag: "Apparel", stock: "In stock", img: IMG("1521572163474-6864f9cf17ab"), sizes: ["L", "XL", "2XL"], colors: ["ecru"] },
+  { name: "Linen Set — Olive", price: "€120", tag: "Apparel", stock: "Low stock", img: IMG("1602810318383-e386cc2a3ccf"), sizes: ["S", "M"], colors: ["olive"] },
+  { name: "Linen Bucket Hat", price: "€32", tag: "Accessory", stock: "In stock", img: IMG("1556306535-38febf6782e7"), sizes: ["OS"], colors: ["sand"] },
+  { name: "Cotton Tote — Natural", price: "€18", tag: "Accessory", stock: "In stock", img: IMG("1597481499750-3e6b22637e12"), sizes: ["OS"], colors: ["ecru"] },
+  { name: "Wool Beanie — Stone", price: "€28", tag: "Accessory", stock: "In stock", img: IMG("1576871337622-98d48d1cf531"), sizes: ["OS"], colors: ["stone"] },
+  { name: "Leather Belt — Tan", price: "€54", tag: "Accessory", stock: "In stock", img: IMG("1624222247344-550fb60583dc"), sizes: ["S", "M", "L"], colors: ["tan"] }
 ];
 
 const SAMPLE_SUGGESTIONS = ["linen shirt", "linen trousers", "linen bucket hat", "linen tote", "olive set", "size m"];
-const SAMPLE_CATEGORIES  = ["Apparel · 124", "Accessories · 38", "Sale · 21"];
+const SAMPLE_CATEGORIES = ["Apparel · 124", "Accessories · 38", "Sale · 21"];
 
 // Cycles through three different intents — keyword, color, size — to show Cataseek matches across attributes.
 const TYPED_QUERIES = [
   { q: "linen", label: "keyword" },
-  { q: "olive", label: "colour"  },
-  { q: "2XL",   label: "size"    }
+  { q: "olive", label: "colour" },
+  { q: "2XL", label: "size" }
 ];
 
 const SearchDemo = () => {
@@ -225,9 +238,9 @@ const SearchDemo = () => {
   return (
     <div className="browser" style={{ position: "relative" }}>
       <div className="browser-bar">
-        <div className="browser-dots"><i/><i/><i/></div>
+        <div className="browser-dots"><i /><i /><i /></div>
         <div className="browser-url">store.example.com</div>
-        <div style={{ width: 60 }}/>
+        <div style={{ width: 60 }} />
       </div>
 
       {/* faux store header */}
@@ -251,7 +264,7 @@ const SearchDemo = () => {
           borderRadius: 999, padding: "6px 12px", width: 220,
           fontSize: 12.5, color: "var(--ink)"
         }}>
-          <Icon.search style={{ color: "var(--ink-3)" }}/>
+          <Icon.search style={{ color: "var(--ink-3)" }} />
           <span style={{ minHeight: 16 }}>{typed}<span style={{ opacity: showCursor ? 1 : 0, marginLeft: 1 }}>|</span></span>
           {!typed && <span style={{ color: "var(--ink-3)" }}>Search products…</span>}
           <span className="mono" style={{ marginLeft: "auto", fontSize: 10, color: "var(--ink-3)", border: "1px solid var(--line-2)", borderRadius: 4, padding: "0px 4px" }}>⌘K</span>
@@ -284,7 +297,7 @@ const SearchDemo = () => {
           WebkitMaskImage: "linear-gradient(to bottom, #000 65%, rgba(0,0,0,0.18) 92%, rgba(0,0,0,0))",
           maskImage: "linear-gradient(to bottom, #000 65%, rgba(0,0,0,0.18) 92%, rgba(0,0,0,0))"
         }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+          <div className="demo-products-grid">
             {SAMPLE_PRODUCTS.map((t, idx) => {
               const matched = isMatch(t);
               const isTop = typed && idx === firstMatchIdx;
@@ -321,10 +334,10 @@ const SearchDemo = () => {
                     <span style={{ color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
                       {typed && matched
                         ? t.name.split(new RegExp(`(${typed})`, 'i')).map((part, i) => (
-                            part.toLowerCase() === typed.toLowerCase()
-                              ? <span key={i} style={{ background: "var(--accent)", padding: "0 2px", borderRadius: 3 }}>{part}</span>
-                              : <span key={i}>{part}</span>
-                          ))
+                          part.toLowerCase() === typed.toLowerCase()
+                            ? <span key={i} style={{ background: "var(--accent)", padding: "0 2px", borderRadius: 3 }}>{part}</span>
+                            : <span key={i}>{part}</span>
+                        ))
                         : t.name}
                     </span>
                     <span style={{ color: "var(--ink-2)", flexShrink: 0 }}>{t.price}</span>
@@ -357,7 +370,7 @@ const SearchDemo = () => {
         {matches.length > 0 && (
           <div style={{
             position: "absolute", right: 18, top: -14,
-            width: 320,
+            width: 320, maxWidth: "calc(100vw - 48px)",
             background: "#fff", border: "1px solid var(--line)",
             borderRadius: 12, boxShadow: "var(--shadow-lg)",
             overflow: "hidden",
@@ -379,7 +392,7 @@ const SearchDemo = () => {
                     backgroundImage: `url(${p.img})`,
                     backgroundSize: "cover", backgroundPosition: "center",
                     border: "1px solid rgba(14,14,12,0.08)"
-                  }}/>
+                  }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 500, letterSpacing: "-0.005em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {p.name.split(new RegExp(`(${typed})`, 'i')).map((part, i) => (
@@ -408,15 +421,15 @@ const SearchDemo = () => {
 
 const Hero = ({ headlineStyle }) => (
   <section style={{ paddingTop: 56, paddingBottom: 56 }}>
-    <div className="wrap hero-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: 56, alignItems: "center" }}>
+    <div className="wrap hero-grid">
       <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 540 }}>
-        <span className="eyebrow"><span className="dot"/>v1.0 · Now in public beta</span>
+        <span className="eyebrow"><span className="dot" />v1.0 · Now in public beta</span>
         <h1 style={{
           fontSize: "clamp(38px, 4.6vw, 64px)",
           margin: 0, letterSpacing: "-0.035em", lineHeight: 1.0,
           fontWeight: 500
         }}>
-          Search that <br/>
+          Search that <br />
           {headlineStyle === "serif"
             ? <span className="serif-i" style={{ fontWeight: 400 }}>actually sells.</span>
             : <span style={{ fontWeight: 500 }}>actually <span style={{ color: "var(--ink-3)" }}>sells.</span></span>
@@ -427,7 +440,7 @@ const Hero = ({ headlineStyle }) => (
           and a design that fits your brand — installed in under a minute.
         </p>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 4 }}>
-          <a href={DASHBOARD_URL + "/register"} className="btn btn-primary btn-lg">Start 14-day free trial <Icon.arrow/></a>
+          <a href={DASHBOARD_URL + "/register"} className="btn btn-primary btn-lg">Start 14-day free trial <Icon.arrow /></a>
           <a href={DASHBOARD_URL + "/login"} className="btn btn-outline btn-lg">Sign in</a>
         </div>
         <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)" }}>
@@ -450,39 +463,34 @@ const Hero = ({ headlineStyle }) => (
 const Integrations = () => {
   const live = [
     { name: "WooCommerce", status: "Live" },
-    { name: "PrestaShop",  status: "Live" }
+    { name: "PrestaShop", status: "Live" }
   ];
   const soon = [
-    { name: "Shopify",     status: "Q3 2026" },
-    { name: "Magento",     status: "Q3 2026" },
+    { name: "Shopify", status: "Q3 2026" },
+    { name: "Magento", status: "Q3 2026" },
     { name: "BigCommerce", status: "Q4 2026" },
-    { name: "OpenCart",    status: "Q4 2026" }
+    { name: "OpenCart", status: "Q4 2026" }
   ];
 
   return (
     <section style={{ padding: "48px 0" }}>
       <div className="wrap" style={{ display: "flex", flexDirection: "column", gap: 28 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 24, flexWrap: "wrap" }}>
-          <span className="eyebrow"><span className="dot"/>Built for your stack</span>
+          <span className="eyebrow"><span className="dot" />Built for your stack</span>
           <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)" }}>2 platforms live · 4 in roadmap</span>
         </div>
-        <div className="grid" style={{ gridTemplateColumns: "repeat(6, 1fr)", gap: 0, border: "1px solid var(--line)", borderRadius: "var(--r-lg)", background: "var(--card)", overflow: "hidden" }}>
-          {[...live, ...soon].map((p, i) => (
-            <div key={p.name} style={{
-              padding: "26px 22px",
-              borderRight: i < 5 ? "1px solid var(--line)" : "none",
-              display: "flex", flexDirection: "column", gap: 10,
-              minHeight: 120,
-              position: "relative"
-            }}>
-              <PlatformGlyph name={p.name}/>
+        <div className="integrations-grid">
+          {[...live, ...soon].map((p) => (
+            <div key={p.name} className="integration-tile">
+              <PlatformGlyph name={p.name} />
               <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
                 <div style={{ fontSize: 14, fontWeight: 500, letterSpacing: "-0.005em" }}>{p.name}</div>
-                <div className="mono" style={{ fontSize: 10.5, letterSpacing: ".06em", textTransform: "uppercase",
+                <div className="mono" style={{
+                  fontSize: 10.5, letterSpacing: ".06em", textTransform: "uppercase",
                   color: p.status === "Live" ? "var(--ink)" : "var(--ink-3)"
                 }}>
                   {p.status === "Live"
-                    ? <><span style={{ display: "inline-block", width: 6, height: 6, background: "var(--accent)", borderRadius: 999, marginRight: 6, verticalAlign: 1 }}/>Live</>
+                    ? <><span style={{ display: "inline-block", width: 6, height: 6, background: "var(--accent)", borderRadius: 999, marginRight: 6, verticalAlign: 1 }} />Live</>
                     : <>Coming · {p.status}</>
                   }
                 </div>
@@ -495,19 +503,55 @@ const Integrations = () => {
   );
 };
 
-/* Abstract platform glyphs (NOT brand logos — original wordmark fragments) */
+/* Circular platform logos for ecommerce integrations using uploaded image files */
 const PlatformGlyph = ({ name }) => {
-  const initial = name[0];
+  const fileNames = {
+    WooCommerce: "woocommerce.png",
+    PrestaShop: "prestashop.png",
+    Shopify: "shopify.png",
+    Magento: "magento.png",
+    BigCommerce: "bigcommerce.png",
+    OpenCart: "opencart.png"
+  };
+
+  const fileName = fileNames[name];
+
+  if (!fileName) {
+    return (
+      <div style={{
+        width: 36, height: 36, borderRadius: "50%",
+        border: "1px solid var(--line)",
+        background: "var(--bg-2)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "Geist Mono, monospace", fontSize: 14, fontWeight: 500,
+        color: "var(--ink)", flexShrink: 0
+      }}>
+        {name[0]}
+      </div>
+    );
+  }
+
   return (
     <div style={{
-      width: 32, height: 32, borderRadius: 8,
+      width: 36, height: 36, borderRadius: "50%",
       border: "1px solid var(--line)",
-      background: "var(--bg-2)",
+      background: "var(--card)",
+      boxShadow: "0 1px 3px rgba(0,0,0,0.05)",
       display: "flex", alignItems: "center", justifyContent: "center",
-      fontFamily: "Geist Mono, monospace", fontSize: 14, fontWeight: 500,
-      color: "var(--ink)"
+      overflow: "hidden",
+      flexShrink: 0,
+      padding: 6
     }}>
-      {initial}
+      <img
+        src={`uploads/ecommerce-logos/${fileName}`}
+        alt={`${name} logo`}
+        style={{
+          maxWidth: "100%",
+          maxHeight: "100%",
+          objectFit: "contain",
+          display: "block"
+        }}
+      />
     </div>
   );
 };
@@ -516,48 +560,109 @@ const PlatformGlyph = ({ name }) => {
    FEATURES
    ============================================================ */
 const FEATURES = [
-  { icon: "bolt",   tag: "01 / Speed",      title: "Sub-50ms results",        body: "Edge-cached index responds before the user finishes typing — even on catalogues over 100k SKUs." },
-  { icon: "brain",  tag: "02 / Relevance",  title: "Typo & synonym smart",    body: "Built-in tolerance for misspellings, plurals and language variants. Train custom synonyms in one click." },
-  { icon: "device", tag: "03 / Mobile",     title: "Native on every device",  body: "Full-screen overlay on mobile, inline dropdown on desktop, with hit-area sizes that pass WCAG out of the box." },
-  { icon: "filter", tag: "04 / Refinement", title: "Faceted on the fly",      body: "Price, stock, category and custom attributes filter the result set instantly — no page reload, no skeletons." },
-  { icon: "chart",  tag: "05 / Insight",    title: "Search analytics",        body: "See zero-result queries, trending terms and conversion per query. Find demand your catalogue is missing." },
-  { icon: "layers", tag: "06 / Theming",    title: "Pixel-fits any theme",    body: "CSS variables for every surface. The default looks great; the override layer stays out of your way." }
+  {
+    num: "01",
+    tag: "01 / INSTANT",
+    title: "Instant as you type",
+    body: "Results appear while your customer is still typing — powered by Meilisearch, built for speed out of the box.",
+    icon: "bolt"
+  },
+  {
+    num: "02",
+    tag: "02 / RELEVANCE",
+    title: "Typo & synonym smart",
+    body: "Built-in tolerance for misspellings and language variants. Set custom synonyms from your dashboard — no code required.",
+    icon: "brain"
+  },
+  {
+    num: "03",
+    tag: "03 / THEMING",
+    title: "One widget, any theme",
+    body: "Cataseek injects a search widget into your existing search input. Configure colors and layout from the dashboard — no template edits needed.",
+    icon: "layers"
+  },
+  {
+    num: "04",
+    tag: "04 / ATTRIBUTES",
+    title: "Searches across all attributes",
+    body: "Matches products by name, category, color, size and custom fields. Keeps results in sync as your catalogue updates.",
+    icon: "filter"
+  },
+  {
+    num: "05",
+    tag: "05 / DASHBOARD",
+    title: "Dashboard for everything",
+    body: "Manage API credentials, design settings, and product sync from one place. See your store's search data without digging through logs.",
+    icon: "chart"
+  },
+  {
+    num: "06",
+    tag: "06 / MULTI-STORE",
+    title: "Multi-language, multi-store",
+    body: "Products sync per language across all your active stores. Search results are filtered to the correct locale automatically.",
+    icon: "globe"
+  }
 ];
 
 const Features = () => (
   <section id="features">
     <div className="wrap">
       <div className="section-head">
-        <span className="eyebrow"><span className="dot"/>What you ship</span>
+        <span className="eyebrow"><span className="dot" />What you ship</span>
         <h2>Six things you'd <span className="serif-i">otherwise build yourself</span>.</h2>
         <p>Everything teams ask us to add first — already in the box. Toggle off what you don't need.</p>
       </div>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+      <div className="features-grid">
         {FEATURES.map(f => {
-          const Ico = Icon[f.icon];
+          const Ico = Icon[f.icon] || Icon.bolt;
           return (
-            <div key={f.title} style={{
+            <div key={f.num} style={{
               border: "1px solid var(--line)",
-              borderRadius: "var(--r-lg)",
+              borderRadius: 20,
               background: "var(--card)",
-              padding: 26,
-              display: "flex", flexDirection: "column", gap: 14,
-              minHeight: 220
+              padding: "28px 26px",
+              display: "flex", flexDirection: "column", gap: 20,
+              minHeight: 220,
+              position: "relative",
+              overflow: "hidden"
             }}>
+              {/* Top Row: Icon + Tag on left, Large Statement Number on right */}
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                <div style={{
-                  width: 36, height: 36, borderRadius: 8,
-                  border: "1px solid var(--line)",
-                  background: "var(--bg)",
-                  display: "flex", alignItems: "center", justifyContent: "center"
-                }}>
-                  <Ico/>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div style={{
+                    width: 32, height: 32, borderRadius: 8,
+                    border: "1px solid var(--line)",
+                    background: "var(--bg-2)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: "var(--ink)", flexShrink: 0
+                  }}>
+                    <Ico />
+                  </div>
+                  <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: ".06em", fontWeight: 500 }}>
+                    {f.tag}
+                  </span>
                 </div>
-                <span className="mono" style={{ fontSize: 11, color: "var(--ink-3)", letterSpacing: ".06em" }}>{f.tag}</span>
+                <span className="mono" style={{
+                  fontSize: 44,
+                  fontWeight: 700,
+                  lineHeight: 0.85,
+                  letterSpacing: "-0.04em",
+                  color: "var(--ink)",
+                  opacity: 0.9,
+                  userSelect: "none"
+                }}>
+                  {f.num}
+                </span>
               </div>
-              <div style={{ marginTop: 8 }}>
-                <h3 style={{ fontSize: 18, margin: "0 0 8px", letterSpacing: "-0.015em", fontWeight: 500 }}>{f.title}</h3>
-                <p style={{ fontSize: 14.5, color: "var(--ink-2)", margin: 0, lineHeight: 1.5 }}>{f.body}</p>
+
+              {/* Title & Body */}
+              <div style={{ marginTop: "auto" }}>
+                <h3 style={{ fontSize: 18, margin: "0 0 8px", letterSpacing: "-0.015em", fontWeight: 600, color: "var(--ink)" }}>
+                  {f.title}
+                </h3>
+                <p style={{ fontSize: 14, color: "var(--ink-2)", margin: 0, lineHeight: 1.55 }}>
+                  {f.body}
+                </p>
               </div>
             </div>
           );
@@ -572,7 +677,7 @@ const Features = () => (
    ============================================================ */
 const Steps = () => {
   const steps = [
-    { n: "01", title: "Install the plugin",   body: "One-click from the WooCommerce or PrestaShop marketplace. Your store keeps running." },
+    { n: "01", title: "Install the plugin", body: "One-click from the WooCommerce or PrestaShop marketplace. Your store keeps running." },
     { n: "02", title: "Cataseek builds the index", body: "Catalogue is mirrored to our edge index in minutes. Webhooks keep it in sync forever." },
     { n: "03", title: "Drop in the search bar", body: "Replace your default search with a single shortcode or block. Theme variables do the rest." }
   ];
@@ -580,13 +685,13 @@ const Steps = () => {
     <section id="integrations" style={{ background: "var(--bg-2)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}>
       <div className="wrap">
         <div className="section-head">
-          <span className="eyebrow"><span className="dot"/>How it works</span>
+          <span className="eyebrow"><span className="dot" />How it works</span>
           <h2>Live on your store in <span className="serif-i">under a minute</span>.</h2>
         </div>
-        <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div className="steps-grid">
           {steps.map((s, i) => (
             <div key={s.n} style={{ display: "flex", flexDirection: "column", gap: 14, paddingTop: 24, borderTop: "1px solid var(--line-2)", position: "relative" }}>
-              <div style={{ position: "absolute", top: -1, left: 0, height: 1, background: "var(--ink)", width: i === 0 ? 60 : 0 }}/>
+              <div style={{ position: "absolute", top: -1, left: 0, height: 1, background: "var(--ink)", width: i === 0 ? 60 : 0 }} />
               <span className="mono" style={{ fontSize: 12, color: "var(--ink-3)", letterSpacing: ".06em" }}>{s.n}</span>
               <h3 style={{ fontSize: 22, margin: 0, letterSpacing: "-0.02em", fontWeight: 500 }}>{s.title}</h3>
               <p style={{ color: "var(--ink-2)", margin: 0, fontSize: 15 }}>{s.body}</p>
@@ -682,23 +787,23 @@ const Pricing = () => {
 
   const plansToShow = rootPlans
     ? rootPlans.map((root, i) => {
-        const chosen = billingPeriod === "yearly"
-          ? (livePlans.find(p => p.parent_plan_id === root.id) || root)
-          : root;
-        return {
-          name: chosen.name,
-          blurb: chosen.description || "",
-          price: Number(chosen.price),
-          period: chosen.billing_period === "yearly" ? "year" : "month",
-          cta: "Start free trial",
-          featured: i === 1 && rootPlans.length >= 3,
-          feats: [
-            `Sync up to ${Number(chosen.max_products).toLocaleString()} products`,
-            `${Number(chosen.max_requests_per_month).toLocaleString()} searches / month`,
-            ...parseFeats(chosen.features),
-          ],
-        };
-      })
+      const chosen = billingPeriod === "yearly"
+        ? (livePlans.find(p => p.parent_plan_id === root.id) || root)
+        : root;
+      return {
+        name: chosen.name,
+        blurb: chosen.description || "",
+        price: Number(chosen.price),
+        period: chosen.billing_period === "yearly" ? "year" : "month",
+        cta: "Start free trial",
+        featured: i === 1 && rootPlans.length >= 3,
+        feats: [
+          `Sync up to ${Number(chosen.max_products).toLocaleString()} products`,
+          `${Number(chosen.max_requests_per_month).toLocaleString()} searches / month`,
+          ...parseFeats(chosen.features),
+        ],
+      };
+    })
     : PLANS.map(p => ({ ...p, period: "month" }));
   const sym = livePlans ? symbol : "€";
 
@@ -707,7 +812,7 @@ const Pricing = () => {
       <div className="wrap">
         <div className="section-head" style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", maxWidth: "100%", flexWrap: "wrap", gap: 24 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 18, maxWidth: 640 }}>
-            <span className="eyebrow"><span className="dot"/>Pricing</span>
+            <span className="eyebrow"><span className="dot" />Pricing</span>
             <h2 style={{ fontSize: "clamp(32px, 4.2vw, 48px)", margin: 0, letterSpacing: "-0.025em", lineHeight: 1.05, fontWeight: 500 }}>
               One plan per store. <span className="serif-i" style={{ color: "var(--ink-3)" }}>Cancel any month.</span>
             </h2>
@@ -751,13 +856,13 @@ const Pricing = () => {
                 <span style={{ fontSize: 13, color: p.featured ? "rgba(246,244,238,0.6)" : "var(--ink-3)" }}>/ {p.period}</span>
               </div>
               <a href={DASHBOARD_URL + "/register"} className={p.featured ? "btn btn-accent btn-lg" : "btn btn-primary btn-lg"} style={{ justifyContent: "center" }}>
-                {p.cta} <Icon.arrow/>
+                {p.cta} <Icon.arrow />
               </a>
-              <div style={{ height: 1, background: p.featured ? "rgba(246,244,238,0.12)" : "var(--line)" }}/>
+              <div style={{ height: 1, background: p.featured ? "rgba(246,244,238,0.12)" : "var(--line)" }} />
               <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 10 }}>
                 {p.feats.map(f => (
                   <li key={f} style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 14, color: p.featured ? "rgba(246,244,238,0.85)" : "var(--ink-2)" }}>
-                    <span style={{ marginTop: 4, color: p.featured ? "var(--accent)" : "var(--ink)" }}><Icon.check/></span>
+                    <span style={{ marginTop: 4, color: p.featured ? "var(--accent)" : "var(--ink)" }}><Icon.check /></span>
                     <span>{f}</span>
                   </li>
                 ))}
@@ -777,33 +882,59 @@ const Pricing = () => {
    FAQ
    ============================================================ */
 const FAQS = [
-  { q: "How long does setup actually take?",
-    a: "Most stores are live in under five minutes. Install the plugin, paste your API key, and the initial index build runs in the background. You can keep using your old search until you're ready to switch." },
-  { q: "Will it slow down my store?",
-    a: "No — Cataseek runs from your customers' nearest edge node and never blocks page rendering. The plugin itself adds about 6KB of JavaScript, loaded async." },
-  { q: "What about non-English stores?",
-    a: "Cataseek ships with stemmers and stopword lists for 30+ languages including French, German, Spanish, Italian, Polish and Portuguese. Multi-language stores can index per-locale." },
-  { q: "Do you support PrestaShop and WooCommerce equally?",
-    a: "Yes. Both plugins are first-class and ship feature parity. Other platforms — Shopify, Magento, BigCommerce, OpenCart — are on the public roadmap for 2026." },
-  { q: "Can I cancel any time?",
-    a: "Yes. Subscriptions are month-to-month with no lock-in. Annual plans get a discount over paying monthly (see the toggle on the pricing section above) and can still be cancelled at the end of the current period." },
-  { q: "What happens to my data if I cancel?",
-    a: "Your index is purged within 24 hours of cancellation. We never sell or share search data, and we'll export your analytics on request." }
+  {
+    q: "How long does setup actually take?",
+    a: "Most stores are live in under five minutes. Install the plugin, paste your API key, and the initial index build runs in the background. You can keep using your old search until you're ready to switch."
+  },
+  {
+    q: "Will it slow down my store?",
+    a: "No — Cataseek runs from your customers' nearest edge node and never blocks page rendering. The plugin itself adds about 6KB of JavaScript, loaded async."
+  },
+  {
+    q: "What about non-English stores?",
+    a: "Cataseek ships with stemmers and stopword lists for 30+ languages including French, German, Spanish, Italian, Polish and Portuguese. Multi-language stores can index per-locale."
+  },
+  {
+    q: "Do you support PrestaShop and WooCommerce equally?",
+    a: "Yes. Both plugins are first-class and ship feature parity. Other platforms — Shopify, Magento, BigCommerce, OpenCart — are on the public roadmap for 2026."
+  },
+  {
+    q: "Can I cancel any time?",
+    a: "Yes. Subscriptions are month-to-month with no lock-in. Annual plans get a discount over paying monthly (see the toggle on the pricing section above) and can still be cancelled at the end of the current period."
+  },
+  {
+    q: "What happens to my data if I cancel?",
+    a: "Your index is purged within 24 hours of cancellation. We never sell or share search data, and we'll export your analytics on request."
+  }
 ];
 
 const FAQ = () => {
   const [open, setOpen] = useState(0);
   return (
     <section>
-      <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr", gap: 56 }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 18, position: "sticky", top: 100, alignSelf: "start" }}>
-          <span className="eyebrow"><span className="dot"/>FAQ</span>
+      <div className="wrap faq-grid">
+        <div className="faq-left">
+          <span className="eyebrow"><span className="dot" />FAQ</span>
           <h2 style={{ fontSize: "clamp(32px, 4vw, 44px)", margin: 0, letterSpacing: "-0.025em", lineHeight: 1.05, fontWeight: 500 }}>
-            Questions, <br/><span className="serif-i" style={{ color: "var(--ink-3)" }}>answered.</span>
+            Questions, <br /><span className="serif-i" style={{ color: "var(--ink-3)" }}>answered.</span>
           </h2>
           <p style={{ color: "var(--ink-2)", margin: 0 }}>
-            Can't find what you're looking for? <span style={{ borderBottom: "1px solid var(--ink)", cursor: "pointer" }}>Email the team →</span>
+            Can't find what you're looking for? <a href="contact.html" style={{ color: "inherit", textDecoration: "none", borderBottom: "1px solid var(--ink)", cursor: "pointer" }}>Email the team →</a>
           </p>
+          <div style={{ marginTop: 8 }}>
+            <img
+              src="uploads/Images/faq.png"
+              alt="Cataseek FAQ"
+              style={{
+                width: "100%",
+                maxWidth: 360,
+                // borderRadius: 16, 
+                // border: "1px solid var(--line)", 
+                display: "block",
+                objectFit: "cover"
+              }}
+            />
+          </div>
         </div>
         <div>
           {FAQS.map((f, i) => (
@@ -811,7 +942,7 @@ const FAQ = () => {
               <div className="faq-q">
                 <span>{f.q}</span>
                 <span style={{ color: "var(--ink-3)", transform: open === i ? "rotate(45deg)" : "none", transition: "transform .2s ease" }}>
-                  <Icon.plus/>
+                  <Icon.plus />
                 </span>
               </div>
               {open === i && <div className="faq-a">{f.a}</div>}
@@ -830,18 +961,16 @@ const FAQ = () => {
 const CTA = () => (
   <section style={{ padding: "32px 0 0" }}>
     <div className="wrap">
-      <div style={{
-        background: "var(--ink)", color: "var(--bg)",
-        borderRadius: 22, padding: "72px 56px",
-        position: "relative", overflow: "hidden"
-      }}>
-        <div style={{ position: "absolute", inset: 0, background:
-          "radial-gradient(1200px 300px at 90% 0%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%)" }}/>
+      <div className="cta-card">
+        <div style={{
+          position: "absolute", inset: 0, background:
+            "radial-gradient(1200px 300px at 90% 0%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 60%)"
+        }} />
         <div style={{ position: "relative", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 36, flexWrap: "wrap" }}>
           <div style={{ maxWidth: 560 }}>
-            <span className="eyebrow" style={{ color: "rgba(246,244,238,0.65)" }}><span className="dot"/>Ready when you are</span>
+            <span className="eyebrow" style={{ color: "rgba(246,244,238,0.65)" }}><span className="dot" />Ready when you are</span>
             <h2 style={{ fontSize: "clamp(36px, 4.6vw, 56px)", margin: "16px 0 14px", letterSpacing: "-0.03em", lineHeight: 1.02, fontWeight: 500 }}>
-              Try Cataseek on your store, <br/>
+              Try Cataseek on your store, <br />
               <span className="serif-i" style={{ color: "var(--accent)" }}>free for 14 days.</span>
             </h2>
             <p style={{ color: "rgba(246,244,238,0.7)", margin: 0, fontSize: 16 }}>
@@ -849,7 +978,7 @@ const CTA = () => (
             </p>
           </div>
           <div style={{ display: "flex", gap: 10 }}>
-            <a href={DASHBOARD_URL + "/register"} className="btn btn-accent btn-lg">Start free trial <Icon.arrow/></a>
+            <a href={DASHBOARD_URL + "/register"} className="btn btn-accent btn-lg">Start free trial <Icon.arrow /></a>
             <a href={DASHBOARD_URL + "/login"} className="btn btn-lg" style={{ background: "transparent", color: "var(--bg)", border: "1px solid rgba(246,244,238,0.2)" }}>
               Sign in
             </a>
@@ -865,9 +994,9 @@ const CTA = () => (
    ============================================================ */
 const Footer = () => (
   <footer>
-    <div className="wrap" style={{ display: "grid", gridTemplateColumns: "1.6fr repeat(4, 1fr)", gap: 40 }}>
+    <div className="wrap footer-grid">
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <Logo color="#FAFAF5"/>
+        <Logo color="#FAFAF5" size={22} width={125} />
         <p style={{ fontSize: 13.5, color: "#8C8A82", margin: 0, maxWidth: 260, lineHeight: 1.5 }}>
           Drop-in product search for modern e-commerce. Made in Lisbon and Berlin.
         </p>
@@ -907,7 +1036,7 @@ const Footer = () => (
         <a href="refund-policy.html" style={{ color: "#8C8A82" }}>Refunds</a>
         <a href="contact.html" style={{ color: "#8C8A82" }}>Contact</a>
       </span>
-      <span className="mono">All systems operational <span style={{ display: "inline-block", width: 6, height: 6, background: "var(--accent)", borderRadius: 999, marginLeft: 6, verticalAlign: 1 }}/></span>
+      <span className="mono">All systems operational <span style={{ display: "inline-block", width: 6, height: 6, background: "var(--accent)", borderRadius: 999, marginLeft: 6, verticalAlign: 1 }} /></span>
     </div>
   </footer>
 );
@@ -927,22 +1056,22 @@ function App() {
 
   return (
     <>
-      <Nav/>
-      <Hero headlineStyle={t.headlineStyle}/>
-      <Integrations/>
-      <Features/>
-      <Steps/>
-      <Pricing/>
-      <FAQ/>
-      <CTA/>
-      <Footer/>
+      <Nav />
+      <Hero headlineStyle={t.headlineStyle} />
+      <Integrations />
+      <Features />
+      <Steps />
+      <Pricing />
+      <FAQ />
+      <CTA />
+      <Footer />
 
       <TweaksPanel title="Tweaks">
         <TweakSection title="Accent">
           <TweakColor
             value={t.accent}
             onChange={v => setTweak("accent", v)}
-            options={["#C0E457", "#FF6A3D", "#3D6AFF", "#E9D7A2", "#11A98A"]}
+            options={["#99C124", "#FF6A3D", "#3D6AFF", "#E9D7A2", "#11A98A"]}
           />
         </TweakSection>
         <TweakSection title="Headline style">
@@ -950,7 +1079,7 @@ function App() {
             value={t.headlineStyle}
             onChange={v => setTweak("headlineStyle", v)}
             options={[
-              { value: "sans",  label: "Sans"  },
+              { value: "sans", label: "Sans" },
               { value: "serif", label: "Serif italic" }
             ]}
           />
@@ -960,4 +1089,4 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
