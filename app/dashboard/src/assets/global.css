@@ -152,9 +152,14 @@ textarea {
 }
 
 .btn-primary:hover {
+  background: var(--accent);
+  color: var(--accent-ink)
+}
+
+/* .btn-primary:hover {
   background: var(--text-main);
   color: var(--primary-hover)
-}
+} */
 
 .btn-primary:disabled {
   opacity: 0.6;
