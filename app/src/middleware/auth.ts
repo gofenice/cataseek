@@ -32,6 +32,12 @@ const tenantCache = createCache<any>();   // keyed by api_key,   TTL 5 min
 const planCache = createCache<any>();   // keyed by tenant_id,  TTL 15 min
 const usageCache = createCache<number>(); // keyed by tenant_id, TTL 60 sec
 
+// Call this whenever a tenant's profile (store_domain, status) is updated so the
+// cached tenant object is evicted and reloaded fresh on the next API request.
+export const invalidateTenantApiCache = (apiKey: string) => {
+  tenantCache.delete(apiKey);
+};
+
 // ─── JWT Authentication ───────────────────────────────────────────────────────
 export const authenticateJWT = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -49,7 +55,7 @@ export const authenticateJWT = async (req: AuthRequest, res: Response, next: Nex
     }
 
     const rows: any = await query(
-      'SELECT id, store_name, email, plan_id, status, role, meilisearch_index_name, search_enabled, hosting_enabled FROM tenants WHERE id = ?',
+      'SELECT id, store_name, email, plan_id, status, role, meilisearch_index_name, search_enabled, hosting_enabled, api_key FROM tenants WHERE id = ?',
       [decoded.tenantId]
     );
 
@@ -102,34 +108,32 @@ export const authenticateApiKey = async (req: AuthRequest, res: Response, next: 
       tenantCache.set(apiKey, tenant, 5 * 60 * 1000); // 5 minutes
     }
 
-    // Domain auto-registration on password-authenticated calls (sync, delete, etc.)
-    // The tenant has proven identity with API key + password, so we trust the domain
-    // they are calling from and auto-register it if it's new.
-    // Security guard: still reject if the domain is already claimed by a DIFFERENT tenant.
+    // Strict Domain Verification: Requesting store domain must match the tenant's primary domain (store_domain)
+    // or an authorized domain in tenant_domains for this tenant ID.
     const requestDomain = req.headers['x-store-domain'] as string;
+    const normalizeDomain = (d: string) => {
+      if (!d) return '';
+      let clean = d.toLowerCase().trim();
+      clean = clean.replace(/^https?:\/\//, '').replace(/^www\./, '');
+      return clean.split('/')[0].split('?')[0].split('#')[0];
+    };
+    const incomingDomain = normalizeDomain(requestDomain);
+    const primaryDomain = normalizeDomain(tenant.store_domain);
+    const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
 
-    if (requestDomain) {
-      const normalizeDomain = (d: string) =>
-        d ? d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '') : '';
-      const incomingDomain = normalizeDomain(requestDomain);
-      const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
-      if (!isLocalhost && incomingDomain) {
-        const conflict: any = await query(
-          'SELECT tenant_id FROM tenant_domains WHERE domain = ?',
-          [incomingDomain]
-        );
-        if (conflict && conflict.length > 0 && conflict[0].tenant_id !== tenant.id) {
-          return res.status(401).json({
-            error: `Authentication failed: Domain "${incomingDomain}" is registered to a different account`
-          });
-        }
-        // Auto-register new domain — first sync from this store adds it to the allowlist
-        await query(
-          `INSERT INTO tenant_domains (tenant_id, domain, label)
-           VALUES (?, ?, 'Auto-registered')
-           ON DUPLICATE KEY UPDATE label = label`,
-          [tenant.id, incomingDomain]
-        );
+    if (!requestDomain) {
+      return res.status(403).json({ error: 'Domain verification failed: X-Store-Domain header is required' });
+    }
+
+    if (!isLocalhost && incomingDomain && incomingDomain !== primaryDomain) {
+      const allowed: any = await query(
+        'SELECT id FROM tenant_domains WHERE tenant_id = ? AND domain = ?',
+        [tenant.id, incomingDomain]
+      );
+      if (!allowed || allowed.length === 0) {
+        return res.status(403).json({
+          error: `Authentication failed: Domain "${incomingDomain}" is not authorized for this account`
+        });
       }
     }
 
@@ -174,8 +178,12 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
     // they are calling from and auto-register it if it's new.
     // Security guard: still reject if the domain is already claimed by a DIFFERENT tenant.    
     const requestDomain = req.headers['x-store-domain'] as string;
-    const normalizeDomain = (d: string) =>
-      d ? d.toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '') : '';
+    const normalizeDomain = (d: string) => {
+      if (!d) return '';
+      let clean = d.toLowerCase().trim();
+      clean = clean.replace(/^https?:\/\//, '').replace(/^www\./, '');
+      return clean.split('/')[0].split('?')[0].split('#')[0];
+    };
     const incomingDomain = normalizeDomain(requestDomain);
     const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
     
@@ -183,7 +191,8 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
       return res.status(403).json({ error: 'Domain verification failed: X-Store-Domain header is required' });
     }
     
-    if (!isLocalhost) {
+    const primaryDomain = normalizeDomain(tenant.store_domain);
+    if (!isLocalhost && incomingDomain && incomingDomain !== primaryDomain) {
       const allowed: any = await query(
         'SELECT id FROM tenant_domains WHERE tenant_id = ? AND domain = ?',
         [tenant.id, incomingDomain]

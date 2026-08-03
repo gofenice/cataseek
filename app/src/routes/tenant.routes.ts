@@ -8,7 +8,7 @@ import { query } from '../config/database';
 import { createTenantIndex, searchProducts, deleteTenantIndex } from '../config/meilisearch';
 import { getRazorpayClient } from '../services/razorpay.service';
 import { hashPassword, comparePassword, generateToken, generateApiKey, generateIndexName } from '../utils/auth';
-import { authenticateJWT, AuthRequest } from '../middleware/auth';
+import { authenticateJWT, AuthRequest, invalidateTenantApiCache } from '../middleware/auth';
 import { sendRegistrationWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../services/mailer.service';
 import { generateToken as generateAccountToken, hashToken, ensureAccountColumns, ensureGoogleAuthColumns } from '../services/account.service';
 import { getGoogleAuthConfig } from '../services/google-auth-settings.service';
@@ -618,6 +618,11 @@ router.put(
         'UPDATE tenants SET store_name = ?, store_domain = ?, email = ? WHERE id = ?',
         [storeName, cleanDomain, email, req.user.id]
       );
+
+      // Evict stale tenant cache so domain change takes effect immediately
+      if (req.user.api_key) {
+        invalidateTenantApiCache(req.user.api_key);
+      }
 
       res.json({ success: true, message: 'Profile updated successfully' });
     } catch (error) {
