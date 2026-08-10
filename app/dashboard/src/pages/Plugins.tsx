@@ -110,7 +110,11 @@ const Plugins: React.FC = () => {
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem',
                                     flexShrink: 0,
                                 }}>
-                                    {meta.icon}
+                                    {meta.icon.startsWith('/') ? (
+                                        <img src={meta.icon} alt={meta.label} style={{ width: '60%', height: '60%', objectFit: 'contain' }} />
+                                    ) : (
+                                        meta.icon
+                                    )}
                                 </div>
                                 <div style={{ minWidth: 0 }}>
                                     <div style={{ fontWeight: 600, fontSize: '1rem' }}>{meta.label}</div>
@@ -157,7 +161,11 @@ const Plugins: React.FC = () => {
                                     display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem',
                                     flexShrink: 0, filter: 'grayscale(1)',
                                 }}>
-                                    {meta.icon}
+                                    {meta.icon.startsWith('/') ? (
+                                        <img src={meta.icon} alt={meta.label} style={{ width: '60%', height: '60%', objectFit: 'contain' }} />
+                                    ) : (
+                                        meta.icon
+                                    )}
                                 </div>
                                 <div style={{ fontWeight: 600, fontSize: '1rem' }}>{meta.label}</div>
                             </div>

@@ -203,7 +203,11 @@ const AdminModules: React.FC = () => {
                                         background: `${meta.color}1a`, border: `1px solid ${meta.color}40`,
                                         display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.2rem',
                                     }}>
-                                        {meta.icon}
+                                        {meta.icon.startsWith('/') ? (
+                                            <img src={meta.icon} alt={meta.label} style={{ width: '60%', height: '60%', objectFit: 'contain' }} />
+                                        ) : (
+                                            meta.icon
+                                        )}
                                     </div>
                                     <div style={{ minWidth: 0, flex: 1 }}>
                                         <div style={{ fontWeight: 600 }}>{meta.label}</div>

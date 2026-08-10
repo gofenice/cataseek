@@ -11,33 +11,40 @@ export interface PlatformMeta {
 export const PLATFORMS: Record<string, PlatformMeta> = {
     prestashop: {
         label: 'PrestaShop',
-        icon: '🛒',
+        icon: '/uploads/ecommerce-logos/prestashop.png',
         color: '#df0067',
         blurb: 'Install as a standard PrestaShop module and connect with your API key.',
     },
     woocommerce: {
-        label: 'WooCommerce',
-        icon: '🔌',
-        color: '#7f54b3',
+        label: 'WordPress',
+        icon: '/uploads/ecommerce-logos/wordpress.png',
+        color: '#21759b',
         blurb: 'WordPress plugin — upload the zip in Plugins → Add New.',
     },
+
     shopify: {
         label: 'Shopify',
-        icon: '🛍️',
+        icon: '/uploads/ecommerce-logos/shopify.png',
         color: '#95bf47',
         blurb: 'Theme app extension package for your Shopify storefront.',
     },
     magento: {
         label: 'Magento',
-        icon: '🧲',
+        icon: '/uploads/ecommerce-logos/magento.png',
         color: '#f26322',
         blurb: 'Magento 2 extension — install via the extension manager or composer.',
     },
     opencart: {
         label: 'OpenCart',
-        icon: '🧩',
+        icon: '/uploads/ecommerce-logos/opencart.png',
         color: '#23a1d1',
         blurb: 'OpenCart extension — install from the admin extension installer.',
+    },
+    bigcommerce: {
+        label: 'BigCommerce',
+        icon: '/uploads/ecommerce-logos/bigcommerce.png',
+        color: '#121212',
+        blurb: 'BigCommerce app — connect via the BigCommerce App Store.',
     },
     custom: {
         label: 'Custom / API',
@@ -47,13 +54,15 @@ export const PLATFORMS: Record<string, PlatformMeta> = {
     },
 };
 
-export const platformMeta = (platform: string): PlatformMeta =>
-    PLATFORMS[platform] || {
+export const platformMeta = (platform: string): PlatformMeta => {
+    const key = platform === 'wordpress' ? 'woocommerce' : platform;
+    return PLATFORMS[key] || {
         label: platform.charAt(0).toUpperCase() + platform.slice(1),
         icon: '📦',
         color: '#64748b',
         blurb: 'Integration package for your store.',
     };
+};
 
 export const formatFileSize = (bytes: number): string => {
     if (!bytes) return '—';
