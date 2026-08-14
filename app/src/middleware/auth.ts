@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, comparePassword } from '../utils/auth';
 import { query } from '../config/database';
+import { normalizeDomain } from '../utils/domain';
 
 export interface AuthRequest extends Request {
   tenant?: any;
@@ -111,12 +112,6 @@ export const authenticateApiKey = async (req: AuthRequest, res: Response, next: 
     // Strict Domain Verification: Requesting store domain must match the tenant's primary domain (store_domain)
     // or an authorized domain in tenant_domains for this tenant ID.
     const requestDomain = req.headers['x-store-domain'] as string;
-    const normalizeDomain = (d: string) => {
-      if (!d) return '';
-      let clean = d.toLowerCase().trim();
-      clean = clean.replace(/^https?:\/\//, '').replace(/^www\./, '');
-      return clean.split('/')[0].split('?')[0].split('#')[0];
-    };
     const incomingDomain = normalizeDomain(requestDomain);
     const primaryDomain = normalizeDomain(tenant.store_domain);
     const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
@@ -178,12 +173,6 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
     // they are calling from and auto-register it if it's new.
     // Security guard: still reject if the domain is already claimed by a DIFFERENT tenant.    
     const requestDomain = req.headers['x-store-domain'] as string;
-    const normalizeDomain = (d: string) => {
-      if (!d) return '';
-      let clean = d.toLowerCase().trim();
-      clean = clean.replace(/^https?:\/\//, '').replace(/^www\./, '');
-      return clean.split('/')[0].split('?')[0].split('#')[0];
-    };
     const incomingDomain = normalizeDomain(requestDomain);
     const isLocalhost = incomingDomain.includes('localhost') || incomingDomain.includes('127.0.0.1');
     

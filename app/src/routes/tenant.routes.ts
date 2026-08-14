@@ -9,6 +9,7 @@ import { createTenantIndex, searchProducts, deleteTenantIndex } from '../config/
 import { getRazorpayClient } from '../services/razorpay.service';
 import { hashPassword, comparePassword, generateToken, generateApiKey, generateIndexName } from '../utils/auth';
 import { authenticateJWT, AuthRequest, invalidateTenantApiCache } from '../middleware/auth';
+import { normalizeDomain, isDomainClaimedByOtherTenant } from '../utils/domain';
 import { sendRegistrationWelcomeEmail, sendPasswordResetEmail, sendVerificationEmail } from '../services/mailer.service';
 import { generateToken as generateAccountToken, hashToken, ensureAccountColumns, ensureGoogleAuthColumns } from '../services/account.service';
 import { getGoogleAuthConfig } from '../services/google-auth-settings.service';
@@ -166,13 +167,23 @@ router.post(
 
       const { storeName, storeDomain, email, password } = req.body;
 
+      // Normalize before EVERY comparison and before storing — the auth
+      // middleware normalizes at request time, so an un-normalized value here
+      // would slip past the checks below and still match another store's domain.
+      const cleanDomain = normalizeDomain(storeDomain);
+
       // Check if email or domain already exists
       const existing: any = await query(
         'SELECT id FROM tenants WHERE email = ? OR store_domain = ?',
-        [email, storeDomain]
+        [email, cleanDomain]
       );
 
       if (existing && existing.length > 0) {
+        return res.status(400).json({ error: 'Email or domain already registered' });
+      }
+
+      // Also reject a domain already verified by another tenant in tenant_domains
+      if (await isDomainClaimedByOtherTenant(query, cleanDomain, null)) {
         return res.status(400).json({ error: 'Email or domain already registered' });
       }
 
@@ -206,7 +217,7 @@ router.post(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, 'trial', ?, ?, NOW())`,
         [
           storeName,
-          storeDomain.toLowerCase(),
+          cleanDomain,
           email.toLowerCase(),
           passwordHash,
           1, // Starter Plan ID
@@ -599,7 +610,7 @@ router.put(
       }
 
       const { storeName, storeDomain, email } = req.body;
-      const cleanDomain = storeDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/$/, '').toLowerCase();
+      const cleanDomain = normalizeDomain(storeDomain);
 
       // Check if domain or email is already taken by another tenant
       const existing: any = await query(
@@ -611,6 +622,13 @@ router.put(
         if (existing[0].email === email) {
           return res.status(400).json({ error: 'Email is already registered by another store' });
         }
+        return res.status(400).json({ error: 'Store domain is already registered' });
+      }
+
+      // The UNIQUE index on tenants.store_domain does not span tenant_domains,
+      // so without this a tenant could claim a domain another tenant has already
+      // verified and both would then authenticate from the same origin.
+      if (await isDomainClaimedByOtherTenant(query, cleanDomain, req.user.id)) {
         return res.status(400).json({ error: 'Store domain is already registered' });
       }
 
