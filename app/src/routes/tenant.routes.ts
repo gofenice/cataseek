@@ -874,20 +874,7 @@ router.get('/analytics', authenticateJWT, async (req: AuthRequest, res: Response
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 15));
     const lowThreshold = parseFloat(req.query.low_result_threshold as string) || 3;
 
-    // ── Ensure table exists (lazy migration) ──────────────────────────────────
-    await query(
-      `CREATE TABLE IF NOT EXISTS search_analytics (
-         id           BIGINT AUTO_INCREMENT PRIMARY KEY,
-         tenant_id    INT NOT NULL,
-         query        VARCHAR(500) NOT NULL,
-         result_count INT NOT NULL DEFAULT 0,
-         language     VARCHAR(10)  DEFAULT 'en',
-         searched_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-         INDEX idx_tenant_date  (tenant_id, searched_at),
-         INDEX idx_tenant_query (tenant_id, query(100)),
-         FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-    );
+    // Table is created at boot by ensureSearchAnalyticsTable().
 
     // ── 90-day retention — lazy prune (fire-and-forget) ──────────────────────
     query(
@@ -942,8 +929,24 @@ router.get('/analytics', authenticateJWT, async (req: AuthRequest, res: Response
       [tenantId, fromStr]
     );
 
+    // The headline "total searches" is read from api_usage — the same table
+    // Overview and Billing bill from — so every tab shows one number. The lists
+    // above still come from search_analytics, which is the only place the actual
+    // query text lives. The two are written together by meterSearch(), but
+    // search_analytics is pruned at 90 days and keys off a timestamp rather than a
+    // date, so deriving the headline from api_usage keeps the tabs identical even
+    // at the window edges.
+    const billed: any = await query(
+      `SELECT COALESCE(SUM(request_count), 0) AS total
+         FROM api_usage
+        WHERE tenant_id = ? AND date >= ?
+          AND endpoint IN ('/products/search', '/products/public/search')`,
+      [tenantId, fromStr]
+    );
+
     const s = summary[0] || {};
-    const totalSearches = Number(s.total_searches || 0);
+    const totalSearches = Number(billed[0]?.total || 0);
+    const analyticsRows = Number(s.total_searches || 0);
     const uniqueQueries = Number(s.unique_queries || 0);
     const zeroResults = Number(s.zero_result_count || 0);
 
@@ -961,8 +964,10 @@ router.get('/analytics', authenticateJWT, async (req: AuthRequest, res: Response
       summary: {
         totalSearches,
         uniqueQueries,
-        zeroResultRate: totalSearches > 0
-          ? parseFloat(((zeroResults / totalSearches) * 100).toFixed(1))
+        // Rate is computed within search_analytics — mixing an api_usage numerator
+        // with an analytics denominator would skew it at the retention boundary.
+        zeroResultRate: analyticsRows > 0
+          ? parseFloat(((zeroResults / analyticsRows) * 100).toFixed(1))
           : 0,
       },
       period: {

@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, comparePassword } from '../utils/auth';
 import { query } from '../config/database';
+import { getBufferedUsage } from '../services/search-metering.service';
 
 export interface AuthRequest extends Request {
   tenant?: any;
@@ -278,6 +279,11 @@ export const checkPlanLimits = async (req: AuthRequest, res: Response, next: Nex
       totalRequests = Number(usage[0]?.total || 0);
       usageCache.set(usageKey, totalRequests, 60 * 1000); // 60 seconds
     }
+
+    // Searches counted but not yet flushed to api_usage. Without this, the 60s
+    // usage cache plus the 5s flush window would let a burst run well past the
+    // plan ceiling before anything noticed.
+    totalRequests += getBufferedUsage(tenantId);
 
     if (totalRequests >= planData.max_requests_per_month) {
       return res.status(429).json({ error: 'Monthly request limit exceeded' });

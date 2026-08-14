@@ -16,6 +16,7 @@ import moduleRoutes from './routes/module.routes';
 import { ensureHostingTables } from './services/hosting.service';
 import { ensureModuleTables } from './services/modules.service';
 import { ensureAccountColumns, ensureGoogleAuthColumns, startTrialEmailScheduler } from './services/account.service';
+import { ensureSearchAnalyticsTable, startMeteringFlusher, stopMeteringFlusher } from './services/search-metering.service';
 
 // Load environment variables
 dotenv.config();
@@ -145,6 +146,24 @@ ensureAccountColumns()
     .then(() => startTrialEmailScheduler())
     .catch((e) => console.error('Account migration error:', e));
 ensureGoogleAuthColumns().catch((e) => console.error('Google auth migration error:', e));
+// Created once at boot — this used to be a CREATE TABLE IF NOT EXISTS issued on
+// every counted search.
+ensureSearchAnalyticsTable().catch((e) => console.error('Search analytics migration error:', e));
+startMeteringFlusher();
+
+// Search counts live in memory between flushes, so drain them before exiting or
+// a redeploy silently discards up to one flush window of billing data.
+const shutdown = (signal: string) => async () => {
+  console.log(`${signal} received — flushing search metering before exit`);
+  try {
+    await stopMeteringFlusher();
+  } catch (e) {
+    console.error('Final metering flush failed:', e);
+  }
+  process.exit(0);
+};
+process.on('SIGTERM', shutdown('SIGTERM'));
+process.on('SIGINT', shutdown('SIGINT'));
 
 // Start server
 app.listen(PORT, () => {

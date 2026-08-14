@@ -4,8 +4,24 @@ import { query, getConnection } from '../config/database';
 import { indexProducts, updateProducts, deleteProducts, searchProducts, updateTenantFilterableAttributes, deleteTenantIndex, createTenantIndex } from '../config/meilisearch';
 import { authenticateApiKey, authenticatePublicSearch, checkPlanLimits, AuthRequest, authenticateJWT } from '../middleware/auth';
 import { RowDataPacket } from 'mysql2';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
+import { meterSearch } from '../services/search-metering.service';
 
 const router = express.Router();
+
+// Per-IP ceiling on the public widget. A shopper typing fast produces a request
+// every debounce tick, so this has to sit well above human speed — it exists to
+// stop scripted floods, while meterSearch() handles what is actually billable.
+const publicSearchLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  // Scope per tenant as well, so one busy store cannot exhaust another's budget
+  // for a shopper sitting behind a shared corporate NAT.
+  keyGenerator: (req: any) => `${req.tenant?.id ?? 'anon'}:${ipKeyGenerator(req.ip)}`,
+  message: { error: 'Too many search requests, please slow down' },
+});
 
 // Track API usage
 const trackUsage = async (tenantId: number, endpoint: string) => {
@@ -265,7 +281,8 @@ router.post(
 // Public Search (No password required, strict domain check)
 router.post(
   '/public/search',
-  authenticatePublicSearch,
+  authenticatePublicSearch, // must precede the limiter — its key includes req.tenant.id
+  publicSearchLimiter,
   checkPlanLimits,
   async (req: AuthRequest, res: Response) => {
     try {
@@ -286,46 +303,14 @@ router.post(
       const tenantId = req.tenant.id;
       const indexName = req.tenant.meilisearch_index_name;
 
-      // ── Fast path: dwell-timer ping, no Meilisearch call, tracks billing/usage ──
+      // ── Legacy dwell ping ────────────────────────────────────────────────────
+      // Storefronts still running the old plugin send count_only:true after their
+      // 5s timer. Metering now happens on the real search below, so honouring this
+      // would double-bill them. Accept and ignore it.
       if (count_only) {
-        const trimmedQuery = searchQuery.trim().toLowerCase();
-        const { result_count = 0 } = req.body;
-
-        if (trimmedQuery.length >= 3) {
-          await trackUsage(tenantId, '/products/public/search');
-
-
-            await query(
-              `CREATE TABLE IF NOT EXISTS search_analytics (
-                id           BIGINT AUTO_INCREMENT PRIMARY KEY,
-                tenant_id    INT NOT NULL,
-                query        VARCHAR(500) NOT NULL,
-                result_count INT NOT NULL DEFAULT 0,
-                language     VARCHAR(10)  DEFAULT 'en',
-                searched_at  TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
-                INDEX idx_tenant_date  (tenant_id, searched_at),
-                INDEX idx_tenant_query (tenant_id, query(100)),
-                FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
-              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-            ).catch(() => {});
-
-            await query(
-              `DELETE FROM search_analytics
-               WHERE tenant_id = ? AND searched_at >= NOW() - INTERVAL 10 SECOND`,
-              [tenantId]
-            ).catch(() => {});
-
-            await query(
-              `INSERT INTO search_analytics (tenant_id, query, result_count, language)
-               VALUES (?, ?, ?, ?)`,
-              [tenantId, trimmedQuery, result_count, language || 'en']
-            ).catch(() => {});
-        }
-        return res.json({ counted: true });
+        return res.json({ counted: true, deprecated: true });
       }
 
-      // Everything below is UNCHANGED from your original file — real search path,
-      // renders results.
       const results = await searchProducts(
         indexName,
         searchQuery,
@@ -392,6 +377,21 @@ router.post(
           suggestions = [];
         }
       }
+
+      // ── Meter AFTER serving ──────────────────────────────────────────────────
+      // This is the request that actually costs Meilisearch time, so this is where
+      // the meter belongs — no client cooperation required. meterSearch() collapses
+      // typing bursts, filter changes and pagination into one billable search, and
+      // skips crawlers. Only the initial catalogue fetch (empty query) is free.
+      meterSearch({
+        tenantId,
+        rawQuery: searchQuery,
+        resultCount: Number(results.estimatedTotalHits) || 0,
+        language,
+        sessionId: req.headers['x-search-session'] as string | undefined,
+        ip: req.ip,
+        userAgent: req.headers['user-agent'],
+      }).catch((e) => console.error('Search metering error:', e));
 
       res.json({
         results: results.hits,

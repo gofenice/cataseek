@@ -37,15 +37,37 @@
       },
       sort: "relevance",
       debounceTimer: null,
-      dwellTimer: null, // fires a count_only request after 5s of stable results
-      dwellFiredForQuery: null, // tracks which exact query text has already been counted
+      dwellTimer: null, // commits history + recent searches after 5s of stable results
+      dwellFiredForQuery: null, // tracks which query text has already been committed
       facets: null,
       facetStats: null,
     };
-    // --- Dwell Timer (search counting gatekeeper) ---
-    // The live /search calls never count. Only after the user stays on
-    // the same results for DWELL_MS without typing does a lightweight
-    // count_only request fire — exactly once per settled query.
+    // --- Search session id ---
+    // Sent as X-Search-Session so the server can collapse one shopper's typing
+    // burst ("n" → "ni" → "nik" → "nike"), filter tweaks and pagination into a
+    // single billable search. It is an anonymous random token scoped to this tab
+    // — no personal data, and it is never used for authentication.
+    var searchSessionId = (function () {
+      try {
+        var k = "cataseek_search_session";
+        var existing = sessionStorage.getItem(k);
+        if (existing) return existing;
+        var id =
+          (window.crypto && window.crypto.randomUUID)
+            ? window.crypto.randomUUID()
+            : String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+        sessionStorage.setItem(k, id);
+        return id;
+      } catch (e) {
+        // Private mode / storage disabled — fall back to a per-page-load id.
+        return String(Date.now()) + "-" + Math.random().toString(36).slice(2);
+      }
+    })();
+
+    // --- Dwell Timer (UX only) ---
+    // Billing and analytics moved server-side, so this no longer gates counting;
+    // it only defers history/recent-searches until the shopper settles, keeping
+    // partial queries out of both.
     var DWELL_MS = 5000;
 
     function cancelDwellTimer() {
@@ -77,20 +99,8 @@
       // has settled on results for 5s — prevents partial queries polluting both.
       pushSearchState();
       saveRecentSearch(q);
-
-      var domain = config.shopDomain || window.location.hostname;
-      var payload = { query: q, count_only: true, result_count: state.total };
-      if (config.language) payload.language = config.language;
-      if (config.storeId) payload.store_id = config.storeId;
-      fetch(apiUrl + "/products/public/search", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey,
-          "X-Store-Domain": domain,
-        },
-        body: JSON.stringify(payload),
-      }).catch(function () {}); // fire-and-forget — never affects UX
+      // No count_only request any more. The server meters the real search call,
+      // so nothing here can under- or over-report usage.
     }
     // --- DOM Elements ---
     var triggerBtn = document.getElementById("cataseek-search-trigger");
@@ -603,6 +613,7 @@
           "Content-Type": "application/json",
           "X-API-Key": apiKey,
           "X-Store-Domain": domain,
+          "X-Search-Session": searchSessionId,
         },
         body: JSON.stringify(payload),
       })
@@ -1207,6 +1218,7 @@
           "Content-Type": "application/json",
           "X-API-Key": apiKey,
           "X-Store-Domain": domain,
+          "X-Search-Session": searchSessionId,
         },
         body: JSON.stringify(payload),
       })
