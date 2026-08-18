@@ -26,9 +26,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        // Runs on every page load. It used to clear the token whenever this
+        // request failed for ANY reason — a flaky network, a server 5xx, a
+        // request cancelled by navigating away — which is why reloading or
+        // sitting idle could sign you out. Only an explicit 401 (the server
+        // rejecting the token) ends the session now; everything else is
+        // retried, keeping the session alive across blips.
         const initAuth = async () => {
             const token = localStorage.getItem('cataseek_token');
-            if (token) {
+            if (!token) {
+                setLoading(false);
+                return;
+            }
+
+            const RETRY_DELAYS_MS = [400, 1200];
+
+            for (let attempt = 0; ; attempt++) {
                 try {
                     const response = await api.get('/tenants/profile');
                     const t = response.data.tenant;
@@ -40,11 +53,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         status: t.status,
                         role: t.role
                     });
-                } catch (error) {
-                    console.error('Failed to fetch profile:', error);
-                    localStorage.removeItem('cataseek_token');
+                    break;
+                } catch (error: any) {
+                    const status = error?.response?.status;
+
+                    if (status === 401) {
+                        // The token is genuinely invalid or expired.
+                        localStorage.removeItem('cataseek_token');
+                        localStorage.removeItem('cataseek_role');
+                        break;
+                    }
+
+                    if (attempt < RETRY_DELAYS_MS.length) {
+                        await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+                        continue;
+                    }
+
+                    // Still failing, but this is not an auth rejection — keep the
+                    // token. A later request can recover the session rather than
+                    // forcing the user to log in again.
+                    console.error('Could not load profile; keeping session:', error);
+                    break;
                 }
             }
+
             setLoading(false);
         };
 
