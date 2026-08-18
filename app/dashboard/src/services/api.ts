@@ -25,13 +25,21 @@ api.interceptors.request.use(
     }
 );
 
-// Add a response interceptor to handle 401 errors
+// Add a response interceptor to handle genuine auth failures.
+//
+// This used to drop the token on ANY 401. The server returned 401 for
+// infrastructure problems too (a dropped DB connection, for instance), so a
+// transient blip silently signed the user out mid-session. The server now
+// distinguishes the two — 401 means the token really is bad, 5xx means try
+// again — and anything without a response at all (offline, timeout, request
+// cancelled on navigation) must never clear the session.
 api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response?.status === 401) {
             localStorage.removeItem('cataseek_token');
-            // We don't redirect here to avoid circular dependencies, 
+            localStorage.removeItem('cataseek_role');
+            // We don't redirect here to avoid circular dependencies,
             // the AuthContext will handle the state change.
         }
         return Promise.reject(error);

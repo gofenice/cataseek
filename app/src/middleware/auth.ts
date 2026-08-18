@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, comparePassword } from '../utils/auth';
-import { query } from '../config/database';
+import { query, isTransientDbError } from '../config/database';
 
 export interface AuthRequest extends Request {
   tenant?: any;
@@ -38,6 +38,28 @@ export const invalidateTenantApiCache = (apiKey: string) => {
   tenantCache.delete(apiKey);
 };
 
+
+/**
+ * A failed database call is NOT an authentication failure.
+ *
+ * These handlers used to return 401 for anything thrown inside the try block —
+ * and the only thing that throws is the DB query. A dropped pooled connection
+ * therefore looked identical to a bad token, and the dashboard's 401 handling
+ * wiped the stored token and logged the user out mid-session. Infrastructure
+ * failures now surface as 503 so the client can retry with its session intact.
+ */
+const failAuth = (res: Response, error: any, context: string) => {
+  if (isTransientDbError(error)) {
+    console.error(`${context}: transient database error, returning 503:`, error.code || error.message);
+    return res.status(503).json({
+      error: 'Service temporarily unavailable, please retry',
+      retryable: true,
+    });
+  }
+  console.error(`${context}:`, error?.message ?? error);
+  return res.status(500).json({ error: 'Authentication check failed', retryable: true });
+};
+
 // ─── JWT Authentication ───────────────────────────────────────────────────────
 export const authenticateJWT = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
@@ -66,8 +88,7 @@ export const authenticateJWT = async (req: AuthRequest, res: Response, next: Nex
     req.user = rows[0];
     next();
   } catch (error: any) {
-    console.error('JWT Authentication error:', error.message);
-    return res.status(401).json({ error: 'Authentication failed' });
+    return failAuth(res, error, 'JWT authentication');
   }
 };
 
@@ -144,8 +165,7 @@ export const authenticateApiKey = async (req: AuthRequest, res: Response, next: 
     req.tenant = tenant;
     next();
   } catch (error) {
-    console.error('API Key authentication error:', error);
-    return res.status(401).json({ error: 'Authentication failed' });
+    return failAuth(res, error, 'API key authentication');
   }
 };
 
@@ -209,8 +229,7 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
     req.tenant = tenant;
     next();
   } catch (error) {
-    console.error('Public Search auth error:', error);
-    return res.status(401).json({ error: 'Authentication failed' });
+    return failAuth(res, error, 'Public search authentication');
   }
 };
 
