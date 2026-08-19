@@ -23,7 +23,7 @@ jest.mock('../utils/auth', () => ({
   comparePassword: jest.fn(),
 }));
 
-import { authenticateJWT } from './auth';
+import { authenticateJWT, authenticateJwtOrApiKey } from './auth';
 
 const makeRes = () => {
   const res: any = {};
@@ -141,5 +141,70 @@ describe('the happy path still works', () => {
       expect(next).toHaveBeenCalled();
       expect(res.status).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('dual auth for endpoints shared by the dashboard and plugins', () => {
+  // The /products/stats regression: guarded by API-key auth only, so a valid
+  // dashboard session got 401 and the client discarded the token.
+  it('accepts a dashboard Bearer token', async () => {
+    mockVerifyToken.mockReturnValue({ tenantId: 7 });
+    mockQuery.mockResolvedValue([TENANT]);
+    const req: any = { headers: { authorization: 'Bearer good.token' } };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await authenticateJwtOrApiKey(req, res, next);
+
+    expect(next).toHaveBeenCalled();
+    expect(res.status).not.toHaveBeenCalledWith(401);
+    // handlers read req.tenant.id, so the JWT branch must populate both
+    expect(req.tenant).toEqual(TENANT);
+    expect(req.user).toEqual(TENANT);
+  });
+
+  it('still rejects a bad Bearer token, tagged as a dead session', async () => {
+    mockVerifyToken.mockReturnValue(null);
+    const req: any = { headers: { authorization: 'Bearer rubbish' } };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await authenticateJwtOrApiKey(req, res, next);
+
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'session_invalid' }));
+    expect(next).not.toHaveBeenCalled();
+  });
+
+  it('falls through to the API-key path when there is no Bearer token', async () => {
+    const req: any = { headers: {} };
+    const res = makeRes();
+    const next = jest.fn();
+
+    await authenticateJwtOrApiKey(req, res, next);
+
+    // No API key either, so it rejects — but crucially NOT as session_invalid,
+    // so a dashboard client would never sign the user out over it.
+    expect(res.status).toHaveBeenCalledWith(401);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.code).toBeUndefined();
+    expect(next).not.toHaveBeenCalled();
+  });
+});
+
+describe('only session failures are tagged session_invalid', () => {
+  it('tags a missing token', async () => {
+    const { res } = await run({});
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'session_invalid' }));
+  });
+
+  it('does NOT tag a transient database failure', async () => {
+    mockVerifyToken.mockReturnValue({ tenantId: 7 });
+    const err: any = new Error('lost'); err.code = 'PROTOCOL_CONNECTION_LOST';
+    mockQuery.mockRejectedValue(err);
+    const { res } = await run();
+    expect(res.status).toHaveBeenCalledWith(503);
+    const payload = res.json.mock.calls[0][0];
+    expect(payload.code).toBeUndefined();
   });
 });

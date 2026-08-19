@@ -57,8 +57,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 } catch (error: any) {
                     const status = error?.response?.status;
 
-                    if (status === 401) {
-                        // The token is genuinely invalid or expired.
+                    // Same rule as the axios interceptor: only a 401 the server
+                    // tags as session_invalid means the token is actually dead.
+                    if (status === 401 && error?.response?.data?.code === 'session_invalid') {
                         localStorage.removeItem('cataseek_token');
                         localStorage.removeItem('cataseek_role');
                         break;

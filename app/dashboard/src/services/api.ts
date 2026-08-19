@@ -36,7 +36,13 @@ api.interceptors.request.use(
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        // Only a 401 that the SERVER tags as a dead session ends the session.
+        // A bare 401 is not enough: /products/stats is guarded by an API-key
+        // check the dashboard cannot satisfy, so hovering the sidebar (which
+        // prefetches it) returned 401 and silently threw the token away. Any
+        // endpoint wired to the wrong middleware would do the same, so the
+        // client now requires the server to say so explicitly.
+        if (error.response?.status === 401 && error.response?.data?.code === 'session_invalid') {
             localStorage.removeItem('cataseek_token');
             localStorage.removeItem('cataseek_role');
             // We don't redirect here to avoid circular dependencies,
