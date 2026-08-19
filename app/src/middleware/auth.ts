@@ -60,20 +60,30 @@ const failAuth = (res: Response, error: any, context: string) => {
   return res.status(500).json({ error: 'Authentication check failed', retryable: true });
 };
 
+/**
+ * Marks a 401 that genuinely means "this session is over".
+ *
+ * The dashboard signs the user out when it sees this code, and ONLY when it
+ * sees it. Without that distinction any 401 from any endpoint ended the
+ * session — which is how /products/stats, an endpoint the dashboard cannot
+ * authenticate against, was logging people out just for hovering the sidebar.
+ */
+export const SESSION_INVALID = 'session_invalid';
+
 // ─── JWT Authentication ───────────────────────────────────────────────────────
 export const authenticateJWT = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'No token provided' });
+      return res.status(401).json({ error: 'No token provided', code: SESSION_INVALID });
     }
 
     const token = authHeader.substring(7);
     const decoded = verifyToken(token);
 
     if (!decoded) {
-      return res.status(401).json({ error: 'Invalid or expired token' });
+      return res.status(401).json({ error: 'Invalid or expired token', code: SESSION_INVALID });
     }
 
     const rows: any = await query(
@@ -82,7 +92,7 @@ export const authenticateJWT = async (req: AuthRequest, res: Response, next: Nex
     );
 
     if (!rows || rows.length === 0) {
-      return res.status(401).json({ error: 'Tenant not found' });
+      return res.status(401).json({ error: 'Tenant not found', code: SESSION_INVALID });
     }
 
     req.user = rows[0];
@@ -231,6 +241,35 @@ export const authenticatePublicSearch = async (req: AuthRequest, res: Response, 
   } catch (error) {
     return failAuth(res, error, 'Public search authentication');
   }
+};
+
+// ─── Dual Authentication (JWT or API key) ─────────────────────────────────────
+/**
+ * For endpoints reached by BOTH the merchant dashboard and a storefront plugin.
+ *
+ * /products/stats is the case that forced this: the dashboard prefetches it when
+ * you hover the sidebar, while the PrestaShop module uses it as its "test
+ * connection" probe with an API key. It was guarded by authenticateApiKey alone,
+ * so every dashboard call returned 401 and the client threw the session away.
+ *
+ * A Bearer token means the dashboard, so authenticate as JWT; anything else
+ * falls through to the API-key path. Both branches leave req.tenant and req.user
+ * populated, so handlers can read either without caring which was used.
+ */
+export const authenticateJwtOrApiKey = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers.authorization;
+
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authenticateJWT(req, res, () => {
+      req.tenant = req.tenant ?? req.user;
+      next();
+    });
+  }
+
+  return authenticateApiKey(req, res, () => {
+    req.user = req.user ?? req.tenant;
+    next();
+  });
 };
 
 // ─── Plan Limits Check ────────────────────────────────────────────────────────

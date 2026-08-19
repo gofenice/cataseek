@@ -42,11 +42,13 @@ const settled = async () => {
   return screen.getByTestId('state').textContent;
 };
 
-const axiosErr = (status?: number) => {
+const axiosErr = (status?: number, code?: string) => {
   const e: any = new Error(status ? `status ${status}` : 'Network Error');
-  if (status) e.response = { status };
+  if (status) e.response = { status, data: code ? { code } : {} };
   return e;
 };
+// A 401 the server tags as a dead session — the only thing that ends a session.
+const sessionExpired = () => axiosErr(401, 'session_invalid');
 
 beforeEach(() => {
   localStorage.clear();
@@ -105,16 +107,16 @@ describe('a real auth rejection still ends the session', () => {
   it('clears the token on 401', async () => {
     localStorage.setItem('cataseek_token', TOKEN);
     localStorage.setItem('cataseek_role', 'merchant');
-    mockGet.mockRejectedValue(axiosErr(401));
+    mockGet.mockRejectedValue(sessionExpired());
     mount();
     expect(await settled()).toBe('out');
     expect(localStorage.getItem('cataseek_token')).toBeNull();
     expect(localStorage.getItem('cataseek_role')).toBeNull();
   });
 
-  it('does not retry a 401 — one rejection is final', async () => {
+  it('does not retry a tagged 401 — one rejection is final', async () => {
     localStorage.setItem('cataseek_token', TOKEN);
-    mockGet.mockRejectedValue(axiosErr(401));
+    mockGet.mockRejectedValue(sessionExpired());
     mount();
     await settled();
     expect(mockGet).toHaveBeenCalledTimes(1);
@@ -126,5 +128,32 @@ describe('no stored session', () => {
     mount();
     expect(await settled()).toBe('out');
     expect(mockGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('an untagged 401 must not end the session', () => {
+  // The /products/stats regression, reproduced: the dashboard prefetches that
+  // endpoint on sidebar hover, it is guarded by an API-key check the dashboard
+  // cannot satisfy, and its bare 401 used to wipe the token mid-session.
+  it('keeps the token when a 401 carries no session_invalid code', async () => {
+    localStorage.setItem('cataseek_token', TOKEN);
+    localStorage.setItem('cataseek_role', 'merchant');
+    mockGet.mockRejectedValue(axiosErr(401));
+
+    mount();
+    await settled();
+
+    expect(localStorage.getItem('cataseek_token')).toBe(TOKEN);
+    expect(localStorage.getItem('cataseek_role')).toBe('merchant');
+  });
+
+  it('recovers the session after an untagged 401 blip', async () => {
+    localStorage.setItem('cataseek_token', TOKEN);
+    mockGet.mockRejectedValueOnce(axiosErr(401)).mockResolvedValue(PROFILE);
+
+    mount();
+
+    expect(await settled()).toBe('in:Test Store');
+    expect(localStorage.getItem('cataseek_token')).toBe(TOKEN);
   });
 });

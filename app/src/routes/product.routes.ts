@@ -2,7 +2,7 @@ import express, { Response } from 'express';
 import { body, validationResult } from 'express-validator';
 import { query, getConnection } from '../config/database';
 import { indexProducts, updateProducts, deleteProducts, searchProducts, updateTenantFilterableAttributes, deleteTenantIndex, createTenantIndex } from '../config/meilisearch';
-import { authenticateApiKey, authenticatePublicSearch, checkPlanLimits, AuthRequest, authenticateJWT } from '../middleware/auth';
+import { authenticateApiKey, authenticatePublicSearch, checkPlanLimits, AuthRequest, authenticateJWT, authenticateJwtOrApiKey } from '../middleware/auth';
 import { RowDataPacket } from 'mysql2';
 
 const router = express.Router();
@@ -468,7 +468,9 @@ router.post(
 );
 
 // Get product statistics
-router.get('/stats', authenticateApiKey, async (req: AuthRequest, res) => {
+// Reached by the dashboard (JWT, via the sidebar hover prefetch) and by the
+// PrestaShop module's connection test (API key) — hence the dual guard.
+router.get('/stats', authenticateJwtOrApiKey, async (req: AuthRequest, res) => {
   try {
     const tenantId = req.tenant.id;
     const tableName = `products_${tenantId}`;
