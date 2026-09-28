@@ -3,12 +3,14 @@ import { query } from '../config/database';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
 import { getRazorpayConfig } from '../services/payment-settings.service';
 import { ensureHostingTables, activateHostingSubscription } from '../services/hosting.service';
+import { createRazorpaySubscription, recordOrder, PlanMappingError } from '../services/razorpay.service';
 import {
-    createRazorpaySubscription,
-    verifySubscriptionSignature,
-    recordOrder,
-    getRazorpayClient,
-} from '../services/razorpay.service';
+    BillingError,
+    createCheckoutRecord,
+    expireEndedSubscriptions,
+    requestCancel,
+    verifyCheckout,
+} from '../services/subscription-lifecycle.service';
 
 const router = express.Router();
 
@@ -31,6 +33,7 @@ router.get('/plans', authenticateJWT, async (req: AuthRequest, res: Response) =>
             'SELECT id, name, price, storage_gb, ram_gb, bandwidth, billing_period, parent_plan_id, yearly_discount_percent FROM hosting_plans WHERE is_active = TRUE ORDER BY price ASC'
         );
 
+        await expireEndedSubscriptions(req.user.id);
         const subs: any = await query(
             `SELECT hs.*, hp.name AS plan_name, hp.price, hp.storage_gb, hp.ram_gb, hp.bandwidth, hp.billing_period
              FROM hosting_subscriptions hs
@@ -68,7 +71,15 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const tenants: any = await query('SELECT id, store_name, email FROM tenants WHERE id = ?', [tenantId]);
         const tenant = tenants[0];
 
-        const subscription = await createRazorpaySubscription(tenant, plan, { table: 'hosting_plans', product: 'hosting' });
+        const subscription = await createRazorpaySubscription(tenant, plan, { table: 'hosting_plans', product: 'hosting', checkoutType: 'immediate' });
+
+        await createCheckoutRecord({
+            product: 'hosting',
+            tenantId,
+            planId: plan.id,
+            razorpaySubscriptionId: subscription.id,
+            checkoutType: 'immediate',
+        });
 
         await recordOrder({
             tenantId,
@@ -91,6 +102,10 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             prefill: { email: tenant.email, name: tenant.store_name },
         });
     } catch (error: any) {
+        if (error instanceof PlanMappingError) {
+            console.error('Razorpay hosting plan mapping error:', error.message);
+            return res.status(409).json({ error: 'This hosting plan is not available for online payment yet. Please contact support.' });
+        }
         console.error('Hosting razorpay subscribe error:', error);
         const detail = error?.error?.description || error?.message;
         res.status(500).json({ error: detail || 'Failed to start checkout' });
@@ -98,84 +113,31 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
 });
 
 // ─── POST /api/hosting/razorpay/verify ────────────────────────────────────────
+// The hosting plan is taken from the Razorpay subscription, never the body.
 router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: Response) => {
     try {
-        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature, planId } = req.body;
-        const tenantId = req.user.id;
-
-        if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature || !planId) {
+        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
+        if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
             return res.status(400).json({ error: 'Missing payment verification fields' });
         }
 
-        const config = await getRazorpayConfig();
-        const valid = verifySubscriptionSignature(
-            razorpay_payment_id, razorpay_subscription_id, razorpay_signature, config.key_secret
-        );
-        if (!valid) {
-            await recordOrder({
-                tenantId,
-                razorpaySubscriptionId: razorpay_subscription_id,
-                razorpayPaymentId: razorpay_payment_id,
-                amount: 0,
-                currency: config.currency,
-                status: 'failed',
-                notes: 'Signature verification failed',
-                product: 'hosting',
-            });
-            return res.status(400).json({ error: 'Payment verification failed' });
-        }
-
-        const plans: any = await query('SELECT * FROM hosting_plans WHERE id = ?', [planId]);
-        if (!plans || plans.length === 0) return res.status(404).json({ error: 'Hosting plan not found' });
-        const plan = plans[0];
-
-        // Payment details for the order record
-        let method: string | null = null;
-        let contact: string | null = null;
-        let email: string | null = null;
-        let amount = Number(plan.price);
-        try {
-            const { client } = await getRazorpayClient();
-            const payment: any = await client.payments.fetch(razorpay_payment_id);
-            method = payment.method || null;
-            contact = payment.contact || null;
-            email = payment.email || null;
-            if (payment.amount) amount = Number(payment.amount) / 100;
-        } catch (e) {
-            console.warn('Could not fetch payment details:', e);
-        }
-
-        const { invoiceNumber, periodEnd } = await activateHostingSubscription({
-            tenantId,
-            plan,
-            currency: config.currency,
-            billingReason: 'hosting_create',
-            razorpaySubscriptionId: razorpay_subscription_id,
-        });
-
-        await recordOrder({
-            tenantId,
-            planId: plan.id,
-            planName: `Hosting — ${plan.name}`,
-            razorpaySubscriptionId: razorpay_subscription_id,
-            razorpayPaymentId: razorpay_payment_id,
-            amount,
-            currency: config.currency,
-            status: 'captured',
-            method,
-            email,
-            contact,
-            notes: 'Initial hosting payment',
+        const r = await verifyCheckout({
             product: 'hosting',
+            tenantId: req.user.id,
+            paymentId: razorpay_payment_id,
+            subscriptionId: razorpay_subscription_id,
+            signature: razorpay_signature,
         });
+        const plan = r.plan;
 
         res.json({
             message: `Hosting plan ${plan.name} activated`,
-            invoiceNumber,
+            invoiceNumber: r.invoiceNumber,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
-            periodEnd,
+            periodEnd: r.periodEnd,
         });
-    } catch (error) {
+    } catch (error: any) {
+        if (error instanceof BillingError) return res.status(error.status).json({ error: error.message });
         console.error('Hosting razorpay verify error:', error);
         res.status(500).json({ error: 'Failed to verify payment' });
     }
@@ -222,30 +184,17 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
 });
 
 // ─── POST /api/hosting/cancel ─────────────────────────────────────────────────
+// Cancelled at Razorpay at cycle end; hosting stays active until current_period_end.
 router.post('/cancel', authenticateJWT, async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
-        const tenantId = req.user.id;
-        const subs: any = await query(
-            "SELECT id, razorpay_subscription_id FROM hosting_subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY current_period_end DESC LIMIT 1",
-            [tenantId]
-        );
-        if (!subs || subs.length === 0) return res.status(404).json({ error: 'No active hosting subscription found' });
-
-        const sub = subs[0];
-
-        if (sub.razorpay_subscription_id) {
-            try {
-                const { client } = await getRazorpayClient();
-                await client.subscriptions.cancel(sub.razorpay_subscription_id, true); // cancel at cycle end
-            } catch (e: any) {
-                console.warn('Razorpay hosting cancel warning:', e?.error?.description || e?.message);
-            }
+        const r = await requestCancel('hosting', req.user.id);
+        res.json({ message: r.message.replace('Subscription cancelled', 'Hosting subscription cancelled'), accessUntil: r.accessUntil });
+    } catch (error: any) {
+        if (error instanceof BillingError) {
+            const msg = error.status === 404 ? 'No active hosting subscription found' : error.message;
+            return res.status(error.status).json({ error: msg });
         }
-
-        await query("UPDATE hosting_subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?", [sub.id]);
-        res.json({ message: 'Hosting subscription cancelled. Service remains active until the end of the billing period.' });
-    } catch (error) {
         console.error('Hosting cancel error:', error);
         res.status(500).json({ error: 'Failed to cancel hosting subscription' });
     }

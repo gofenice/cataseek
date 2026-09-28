@@ -1,7 +1,7 @@
 import { query } from '../config/database';
 import { generateInvoicePDF } from './pdf.service';
 import { sendInvoiceEmail } from './mailer.service';
-import { getRazorpayClient } from './razorpay.service';
+import { getRazorpayClient, ensureSubscriptionLifecycleColumns } from './razorpay.service';
 import { getCompanyConfig } from './payment-settings.service';
 import { backfillYearlyVariants } from './plan-sync.service';
 
@@ -10,9 +10,16 @@ import { backfillYearlyVariants } from './plan-sync.service';
 // service is enabled per tenant (tenants.hosting_enabled). Billing reuses the
 // same Razorpay/demo gateway as search subscriptions.
 
-let migrated = false;
-export async function ensureHostingTables() {
-    if (migrated) return;
+// Memoised: concurrent first callers share one run (backfillYearlyVariants must not race)
+let migration: Promise<void> | null = null;
+export function ensureHostingTables(): Promise<void> {
+    if (!migration) {
+        migration = runHostingMigrations().catch((e) => { migration = null; throw e; });
+    }
+    return migration;
+}
+
+async function runHostingMigrations() {
 
     await query(`
         CREATE TABLE IF NOT EXISTS hosting_plans (
@@ -56,6 +63,9 @@ export async function ensureHostingTables() {
     try { await query('ALTER TABLE tenants ADD COLUMN hosting_enabled BOOLEAN NOT NULL DEFAULT FALSE'); } catch (_) { /* exists */ }
     try { await query('ALTER TABLE tenants ADD COLUMN search_enabled BOOLEAN NOT NULL DEFAULT TRUE'); } catch (_) { /* exists */ }
 
+    // Same gateway lifecycle columns as search subscriptions (see subscription-lifecycle.service)
+    await ensureSubscriptionLifecycleColumns('hosting_subscriptions');
+
     // Distinguish products in the shared orders table
     try { await query("ALTER TABLE orders ADD COLUMN product VARCHAR(20) NOT NULL DEFAULT 'search'"); } catch (_) { /* exists */ }
 
@@ -64,8 +74,6 @@ export async function ensureHostingTables() {
     try { await query("ALTER TABLE hosting_plans ADD COLUMN yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0"); } catch (_) { /* exists */ }
     try { await query("ALTER TABLE hosting_plans ADD COLUMN parent_plan_id INT NULL"); } catch (_) { /* exists */ }
     await backfillYearlyVariants('hosting_plans');
-
-    migrated = true;
 }
 
 function makeInvoiceNumber(id: number): string {

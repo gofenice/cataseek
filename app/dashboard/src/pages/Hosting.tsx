@@ -24,6 +24,7 @@ interface HostingSubscription {
     billing_period: string;
     status: string;
     current_period_end: string;
+    cancel_at_period_end?: number | boolean;
 }
 
 interface PaymentConfig {
@@ -113,7 +114,6 @@ const Hosting: React.FC = () => {
                             razorpay_payment_id: response.razorpay_payment_id,
                             razorpay_subscription_id: response.razorpay_subscription_id,
                             razorpay_signature: response.razorpay_signature,
-                            planId,
                         });
                         setConfirmation({
                             planName: verifyRes.data.plan.name,
@@ -293,9 +293,15 @@ const Hosting: React.FC = () => {
                         <div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Current Hosting Plan</div>
                             <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)' }}>{subscription.plan_name}</div>
-                            <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
-                            </div>
+                            {subscription.cancel_at_period_end ? (
+                                <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <CheckCircle size={12} /> Cancelled · active until {fmt(subscription.current_period_end)}
+                                </div>
+                            ) : (
+                                <div style={{ fontSize: '0.8rem', color: '#10b981', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
+                                </div>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
                             {[
@@ -310,6 +316,7 @@ const Hosting: React.FC = () => {
                                 </div>
                             ))}
                         </div>
+                        {!subscription.cancel_at_period_end && (
                         <button
                             onClick={handleCancel}
                             disabled={cancelling}
@@ -322,6 +329,7 @@ const Hosting: React.FC = () => {
                         >
                             {cancelling ? 'Cancelling…' : 'Cancel Hosting'}
                         </button>
+                        )}
                     </div>
                 </div>
             )}

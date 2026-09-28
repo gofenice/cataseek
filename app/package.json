@@ -30,7 +30,6 @@
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.18.0",
     "razorpay": "^2.9.6",
-    "stripe": "^14.10.0",
     "uuid": "^9.0.1"
   },
   "devDependencies": {

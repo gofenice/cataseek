@@ -33,3 +33,7 @@ Thumbs.db
 # Temp
 .temp/
 .tmp/
+
+# Local-only Razorpay migration notes/skill (not for the repo)
+app/.razorpay-migration/
+app/.claude/skills/razorpay-migration/

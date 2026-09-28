@@ -16,6 +16,8 @@ import moduleRoutes from './routes/module.routes';
 import { ensureHostingTables } from './services/hosting.service';
 import { ensureModuleTables } from './services/modules.service';
 import { ensureAccountColumns, ensureGoogleAuthColumns, startTrialEmailScheduler } from './services/account.service';
+import { ensurePaymentTables } from './services/razorpay.service';
+import { expireEndedSubscriptions } from './services/subscription-lifecycle.service';
 
 // Load environment variables
 dotenv.config();
@@ -54,8 +56,7 @@ app.use(cors({
   credentials: true
 }));
 
-// Special handling for payment webhooks (signature check needs raw body)
-app.use('/api/plans/webhook', express.raw({ type: 'application/json' }));
+// Razorpay webhook: signature check needs the raw body
 app.use('/api/billing/razorpay/webhook', express.raw({ type: 'application/json' }));
 
 // JSON body parser for other routes
@@ -145,6 +146,19 @@ ensureAccountColumns()
     .then(() => startTrialEmailScheduler())
     .catch((e) => console.error('Account migration error:', e));
 ensureGoogleAuthColumns().catch((e) => console.error('Google auth migration error:', e));
+
+// Payment tables, then an hourly sweep that ends subscriptions whose cancelled
+// period is over (cancellations keep access until current_period_end).
+ensureHostingTables()
+    .then(() => ensurePaymentTables())
+    .then(() => {
+        const sweep = () => expireEndedSubscriptions()
+            .then((n) => { if (n > 0) console.log(`[Billing] ended ${n} cancelled subscription(s)`); })
+            .catch((e) => console.error('Subscription expiry sweep error:', e));
+        setTimeout(sweep, 60 * 1000);
+        setInterval(sweep, 60 * 60 * 1000);
+    })
+    .catch((e) => console.error('Payment migration error:', e));
 
 // Start server
 app.listen(PORT, () => {

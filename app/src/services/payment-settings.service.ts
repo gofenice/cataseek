@@ -12,6 +12,16 @@ export interface RazorpayConfig {
     key_secret: string;
     webhook_secret: string;
     currency: string;
+    // 'env' when RAZORPAY_KEY_ID/RAZORPAY_KEY_SECRET in the environment override the DB values
+    key_source: 'env' | 'db';
+}
+
+// Razorpay key ids carry their mode in the prefix, so it can never disagree with
+// the keys actually in use (test plan ids with live keys would fail at checkout).
+export function modeFromKeyId(keyId: string): 'test' | 'live' | null {
+    if (keyId.startsWith('rzp_live_')) return 'live';
+    if (keyId.startsWith('rzp_test_')) return 'test';
+    return null;
 }
 
 const SETTING_KEYS = [
@@ -109,13 +119,21 @@ export async function getRazorpayConfig(skipCache = false): Promise<RazorpayConf
     const map: Record<string, string> = {};
     for (const row of rows) map[row.setting_key] = row.setting_value;
 
+    // Environment variables win over the admin-saved values, so each deployment
+    // (local test keys, production live keys) can carry its own credentials.
+    const envKeyId = (process.env.RAZORPAY_KEY_ID || '').trim();
+    const envKeySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
+    const useEnvKeys = !!(envKeyId && envKeySecret);
+    const keyId = useEnvKeys ? envKeyId : (map.razorpay_key_id || '');
+
     const config: RazorpayConfig = {
         enabled: map.razorpay_enabled === 'true',
-        mode: map.razorpay_mode === 'live' ? 'live' : 'test',
-        key_id: map.razorpay_key_id || '',
-        key_secret: map.razorpay_key_secret || '',
-        webhook_secret: map.razorpay_webhook_secret || '',
+        mode: modeFromKeyId(keyId) || (map.razorpay_mode === 'live' ? 'live' : 'test'),
+        key_id: keyId,
+        key_secret: useEnvKeys ? envKeySecret : (map.razorpay_key_secret || ''),
+        webhook_secret: (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim() || map.razorpay_webhook_secret || '',
         currency: map.payment_currency || 'INR',
+        key_source: useEnvKeys ? 'env' : 'db',
     };
 
     cache = { value: config, expiresAt: Date.now() + 60 * 1000 };

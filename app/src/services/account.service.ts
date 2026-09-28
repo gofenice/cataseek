@@ -62,7 +62,7 @@ export async function runTrialEmailSweep() {
           AND t.trial_ends_at IS NOT NULL
           AND t.trial_ends_at > NOW()
           AND t.trial_ends_at <= DATE_ADD(NOW(), INTERVAL ? DAY)
-          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.status = 'active')
+          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.status IN ('active','trialing'))
     `, [REMINDER_DAYS_BEFORE]);
 
     for (const t of expiring) {
@@ -86,7 +86,7 @@ export async function runTrialEmailSweep() {
           AND t.trial_expired_notice_sent = FALSE
           AND t.trial_ends_at IS NOT NULL
           AND t.trial_ends_at <= NOW()
-          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.status = 'active')
+          AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.tenant_id = t.id AND s.status IN ('active','trialing'))
     `);
 
     for (const t of expired) {

@@ -66,12 +66,19 @@ Then issue HTTPS with `certbot --nginx` (or use Caddy for automatic TLS).
 > The app calls `app.set('trust proxy', 1)` automatically in production so rate limiting sees real client IPs.
 
 ## 7. Payments (Razorpay)
-1. Admin → Payment Settings → enter live Key ID/Secret, set mode = live, enable.
-2. In the Razorpay dashboard, add a webhook:
+1. Live keys: set `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / `RAZORPAY_WEBHOOK_SECRET` in `.env`
+   (or enter them in Admin → Payment Settings). The mode follows the key prefix (`rzp_live_`).
+2. In the Razorpay Dashboard (**Live** mode) create one plan per Cataseek plan (monthly + yearly,
+   same USD amount), then map them in Admin → Payment Settings → Plan mapping → Live, and click
+   **Verify mapping**. Test-mode plans do not exist in Live mode. Checkout refuses unmapped plans.
+3. In the Razorpay Dashboard (Live mode), add a webhook:
    - URL: `https://app.yourdomain.com/api/billing/razorpay/webhook`
-   - Secret: same value you saved in Admin → Payment Settings.
-   - Events: `subscription.charged`, `subscription.cancelled`, `subscription.halted`, `payment.failed`.
-3. Complete Razorpay KYC and submit your site (Terms/Privacy/Refund/Contact pages are in `../filez/`).
+   - Secret: same value as `RAZORPAY_WEBHOOK_SECRET` / Admin → Payment Settings.
+   - Events: `subscription.authenticated`, `subscription.activated`, `subscription.charged`,
+     `subscription.pending`, `subscription.halted`, `subscription.cancelled`, `subscription.completed`,
+     `subscription.paused`, `subscription.resumed`, `subscription.updated`, `payment.failed`.
+4. Enable Payment Settings → "Enable Razorpay checkout".
+5. Complete Razorpay KYC and submit your site (Terms/Privacy/Refund/Contact pages are in `../filez/`).
 
 ## 8. Landing site
 Upload `../filez/*.html`, `cataseek-app.jsx`, `tweaks-panel.jsx`, `legal-style.css` to your static host on `yourdomain.com`.

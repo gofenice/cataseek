@@ -1,27 +1,32 @@
 import express, { Response } from 'express';
+import crypto from 'crypto';
 import { query } from '../config/database';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
 import { generateInvoicePDF } from '../services/pdf.service';
-import { sendInvoiceEmail, sendSubscriptionWelcomeEmail, sendPaymentFailedEmail, sendSubscriptionPausedEmail } from '../services/mailer.service';
+import { sendInvoiceEmail, sendSubscriptionWelcomeEmail } from '../services/mailer.service';
 import { getRazorpayConfig, getCompanyConfig } from '../services/payment-settings.service';
 import {
     createRazorpaySubscription,
-    verifySubscriptionSignature,
     verifyWebhookSignature,
     recordOrder,
     ensurePaymentTables,
+    ensureInvoicesTable,
     getRazorpayClient,
-    ensureRazorpayPlan,
+    resolveRazorpayPlanForCheckout,
+    PlanMappingError,
 } from '../services/razorpay.service';
-import { activateHostingSubscription } from '../services/hosting.service';
+import {
+    BillingError,
+    createCheckoutRecord,
+    expireEndedSubscriptions,
+    makeInvoiceNumber,
+    processWebhookEvent,
+    remainingTrialEnd,
+    requestCancel,
+    verifyCheckout,
+} from '../services/subscription-lifecycle.service';
 
 const router = express.Router();
-
-// ─── Helper: build invoice number ─────────────────────────────────────────────
-function makeInvoiceNumber(id: number): string {
-    const year = new Date().getFullYear();
-    return `INV-${year}-${String(id).padStart(5, '0')}`;
-}
 
 // ─── Helper: prorated unused value of the current subscription ────────────────
 // Used as a ONE-TIME credit on the first charge when a client changes plan
@@ -56,42 +61,21 @@ function effectiveMonthlyPrice(price: number | string, billingPeriod: string): n
 // ─── Helper: this tenant's current active subscription + plan details ─────────
 async function getActiveSubscriptionWithPlan(tenantId: number): Promise<any | null> {
     const subs: any = await query(
-        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id,
+        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id, s.gateway_status, s.cancel_at_period_end,
                 p.id AS plan_id, p.name AS plan_name, p.price, p.billing_period
          FROM subscriptions s
          JOIN plans p ON s.plan_id = p.id
          WHERE s.tenant_id = ? AND s.status = 'active'
+           AND NOT (s.cancel_at_period_end = 1 AND s.current_period_end <= NOW())
          ORDER BY s.current_period_end DESC LIMIT 1`,
         [tenantId]
     );
     return subs && subs.length > 0 ? subs[0] : null;
 }
 
-// ─── Ensure invoices table exists (lazy migration) ────────────────────────────
-async function ensureInvoicesTable() {
-    await query(`
-    CREATE TABLE IF NOT EXISTS invoices (
-      id               INT AUTO_INCREMENT PRIMARY KEY,
-      tenant_id        INT NOT NULL,
-      invoice_number   VARCHAR(30) NOT NULL,
-      plan_name        VARCHAR(100) NOT NULL,
-      billing_reason   VARCHAR(100) NOT NULL DEFAULT 'subscription_cycle',
-      amount           DECIMAL(10,2) NOT NULL,
-      currency         VARCHAR(10) NOT NULL DEFAULT 'USD',
-      status           ENUM('paid','pending','failed') NOT NULL DEFAULT 'pending',
-      period_start     DATETIME,
-      period_end       DATETIME,
-      paid_at          DATETIME,
-      created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-      INDEX idx_tenant (tenant_id),
-      INDEX idx_status (status)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-}
-
-// ─── Shared: activate a subscription for a tenant ─────────────────────────────
-// Used by demo subscribe, Razorpay verify, and webhook renewals.
+// ─── Demo mode: activate a subscription for a tenant ──────────────────────────
+// Used by demo subscribe and demo deferred downgrades only. Razorpay-backed
+// subscriptions go through subscription-lifecycle.service (verify + webhooks).
 async function activateSubscription(opts: {
     tenantId: number;
     plan: any;
@@ -343,8 +327,11 @@ router.get('/invoices/:id/download', authenticateJWT, async (req: AuthRequest, r
 });
 
 // ─── POST /api/billing/razorpay/subscribe ─────────────────────────────────────
-// Step 1 of checkout: create a Razorpay subscription, return its id so the
-// frontend can open Razorpay Checkout.
+// Step 1 of checkout: create a Razorpay subscription for the chosen plan and a
+// local 'incomplete' row for it; return the id so the dashboard can open Checkout.
+//   trial     — tenant still in its free trial: first charge at trial end
+//   upgrade   — plan change with unused-value credit: discounted first cycle now
+//   immediate — everything else: charged now
 router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res: Response) => {
     try {
         const { planId } = req.body;
@@ -355,6 +342,9 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const config = await getRazorpayConfig();
         if (!config.enabled) return res.status(400).json({ error: 'Online payments are not enabled' });
 
+        await ensurePaymentTables();
+        await expireEndedSubscriptions(tenantId);
+
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
         const plan = plans[0];
@@ -362,28 +352,49 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         // Downgrades are deferred to current_period_end (POST /downgrade), not
         // switched immediately — this endpoint is upgrade/new-subscription only.
         const existingSub = await getActiveSubscriptionWithPlan(tenantId);
+        if (existingSub && Number(existingSub.plan_id) === Number(plan.id) && !existingSub.cancel_at_period_end) {
+            return res.status(400).json({ error: 'You are already on this plan' });
+        }
         if (existingSub && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(existingSub.price, existingSub.billing_period)) {
             return res.status(400).json({ error: 'Use POST /api/billing/downgrade to schedule a plan downgrade.' });
         }
 
-        const tenants: any = await query('SELECT id, store_name, email FROM tenants WHERE id = ?', [tenantId]);
+        const tenants: any = await query('SELECT id, store_name, email, status, trial_ends_at FROM tenants WHERE id = ?', [tenantId]);
         const tenant = tenants[0];
+
+        // Free trial: keep the remaining trial days — the subscription starts
+        // (first charge) when the trial ends; checkout only authorises the card.
+        const trialEnd = existingSub ? null : remainingTrialEnd(tenant);
 
         // One-time plan-change credit: unused value of the current subscription
         // is deducted from the FIRST charge; recurring full price starts next cycle.
-        const { credit, oldPlanName } = await getPlanChangeCredit(tenantId);
+        const { credit, oldPlanName } = trialEnd ? { credit: 0, oldPlanName: null } : await getPlanChangeCredit(tenantId);
         const creditApplied = credit > 0 ? Math.min(credit, Number(plan.price) - 1) : 0;
-        const firstCharge = Math.round((Number(plan.price) - creditApplied) * 100) / 100;
+        const firstCharge = trialEnd ? 0 : Math.round((Number(plan.price) - creditApplied) * 100) / 100;
 
         let subscription: any;
-        if (creditApplied > 0) {
+        let checkoutType: 'immediate' | 'trial' | 'upgrade' = 'immediate';
+        let startsAt: Date | null = null;
+
+        if (trialEnd) {
+            checkoutType = 'trial';
+            startsAt = trialEnd;
+            subscription = await createRazorpaySubscription(tenant, plan, {
+                product: 'search',
+                checkoutType,
+                startAt: Math.floor(trialEnd.getTime() / 1000),
+            });
+        } else if (creditApplied > 0) {
             // Recurring mandate starts next cycle; discounted first cycle collected now
+            checkoutType = 'upgrade';
             const startAt = new Date();
             if (plan.billing_period === 'yearly') startAt.setFullYear(startAt.getFullYear() + 1);
             else startAt.setMonth(startAt.getMonth() + 1);
+            startsAt = startAt;
 
             subscription = await createRazorpaySubscription(tenant, plan, {
                 product: 'search',
+                checkoutType,
                 startAt: Math.floor(startAt.getTime() / 1000),
                 upfront: {
                     amount: firstCharge,
@@ -391,8 +402,17 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
                 },
             });
         } else {
-            subscription = await createRazorpaySubscription(tenant, plan, { product: 'search' });
+            subscription = await createRazorpaySubscription(tenant, plan, { product: 'search', checkoutType });
         }
+
+        await createCheckoutRecord({
+            product: 'search',
+            tenantId,
+            planId: plan.id,
+            razorpaySubscriptionId: subscription.id,
+            checkoutType,
+            startsAt,
+        });
 
         // Record a pending order so we can track abandoned checkouts too
         await recordOrder({
@@ -404,7 +424,9 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             currency: config.currency,
             status: 'created',
             email: tenant.email,
-            notes: creditApplied > 0 ? `Checkout initiated (plan-change credit ${creditApplied} applied)` : 'Checkout initiated',
+            notes: checkoutType === 'trial'
+                ? `Trial checkout initiated (first charge ${startsAt!.toISOString()})`
+                : creditApplied > 0 ? `Checkout initiated (plan-change credit ${creditApplied} applied)` : 'Checkout initiated',
         });
 
         res.json({
@@ -412,11 +434,17 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             keyId: config.key_id,
             currency: config.currency,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
+            checkoutType,
+            firstChargeAt: startsAt,
             creditApplied,
             firstCharge,
             prefill: { email: tenant.email, name: tenant.store_name },
         });
     } catch (error: any) {
+        if (error instanceof PlanMappingError) {
+            console.error('Razorpay plan mapping error:', error.message);
+            return res.status(409).json({ error: 'This plan is not available for online payment yet. Please contact support.' });
+        }
         console.error('Razorpay subscribe error:', error);
         const detail = error?.error?.description || error?.message;
         res.status(500).json({ error: detail || 'Failed to start checkout' });
@@ -424,258 +452,126 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
 });
 
 // ─── POST /api/billing/razorpay/verify ────────────────────────────────────────
-// Step 2 of checkout: Razorpay Checkout returns payment_id + signature.
-// Verify the signature, then activate the subscription + create invoice/order.
+// Step 2 of checkout: Razorpay Checkout returns payment_id + subscription_id +
+// signature. The plan is taken from the Razorpay subscription, never the body.
 router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: Response) => {
     try {
-        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature, planId } = req.body;
-        const tenantId = req.user.id;
-
-        if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature || !planId) {
+        const { razorpay_payment_id, razorpay_subscription_id, razorpay_signature } = req.body;
+        if (!razorpay_payment_id || !razorpay_subscription_id || !razorpay_signature) {
             return res.status(400).json({ error: 'Missing payment verification fields' });
         }
 
-        const config = await getRazorpayConfig();
-        const valid = verifySubscriptionSignature(
-            razorpay_payment_id, razorpay_subscription_id, razorpay_signature, config.key_secret
-        );
-        if (!valid) {
-            await recordOrder({
-                tenantId,
-                razorpaySubscriptionId: razorpay_subscription_id,
-                razorpayPaymentId: razorpay_payment_id,
-                amount: 0,
-                currency: config.currency,
-                status: 'failed',
-                notes: 'Signature verification failed',
+        const r = await verifyCheckout({
+            product: 'search',
+            tenantId: req.user.id,
+            paymentId: razorpay_payment_id,
+            subscriptionId: razorpay_subscription_id,
+            signature: razorpay_signature,
+        });
+        const plan = r.plan;
+        const planInfo = { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period };
+
+        if (r.checkoutType === 'trial') {
+            return res.json({
+                message: `${plan.name} plan scheduled — your free trial continues and your first payment is on ${r.startsAt ? new Date(r.startsAt).toLocaleDateString() : 'the day your trial ends'}.`,
+                checkoutType: r.checkoutType,
+                plan: planInfo,
+                firstChargeAt: r.startsAt,
+                firstCharge: 0,
+                creditApplied: 0,
             });
-            return res.status(400).json({ error: 'Payment verification failed' });
         }
 
-        const plans: any = await query('SELECT * FROM plans WHERE id = ?', [planId]);
-        if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        const plan = plans[0];
-
-        // Fetch payment details from Razorpay for the order record (method, contact)
-        let method: string | null = null;
-        let contact: string | null = null;
-        let email: string | null = null;
-        let amount = Number(plan.price);
-        try {
-            const { client } = await getRazorpayClient();
-            const payment: any = await client.payments.fetch(razorpay_payment_id);
-            method = payment.method || null;
-            contact = payment.contact || null;
-            email = payment.email || null;
-            if (payment.amount) amount = Number(payment.amount) / 100;
-        } catch (e) {
-            console.warn('Could not fetch payment details:', e);
-        }
-
-        const { invoiceNumber, periodEnd } = await activateSubscription({
-            tenantId,
-            plan,
-            currency: config.currency,
-            billingReason: amount < Number(plan.price) ? 'subscription_upgrade' : 'subscription_create',
-            razorpaySubscriptionId: razorpay_subscription_id,
-            amountOverride: amount, // invoice matches what was actually charged (credit-adjusted)
-        });
-
-        await recordOrder({
-            tenantId,
-            planId: plan.id,
-            planName: plan.name,
-            razorpaySubscriptionId: razorpay_subscription_id,
-            razorpayPaymentId: razorpay_payment_id,
-            amount,
-            currency: config.currency,
-            status: 'captured',
-            method,
-            email,
-            contact,
-            notes: 'Initial subscription payment',
-        });
-
+        const amount = r.amount ?? Number(plan.price);
         const creditApplied = Math.max(0, Math.round((Number(plan.price) - amount) * 100) / 100);
         res.json({
             message: creditApplied > 0
                 ? `Successfully subscribed to ${plan.name} — ${creditApplied.toFixed(2)} credit from your previous plan applied to the first charge`
                 : `Successfully subscribed to ${plan.name}`,
-            invoiceNumber,
-            plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
+            checkoutType: r.checkoutType,
+            invoiceNumber: r.invoiceNumber,
+            plan: planInfo,
             creditApplied,
             firstCharge: amount,
-            periodEnd,
+            periodEnd: r.periodEnd,
         });
-    } catch (error) {
+    } catch (error: any) {
+        if (error instanceof BillingError) return res.status(error.status).json({ error: error.message });
         console.error('Razorpay verify error:', error);
         res.status(500).json({ error: 'Failed to verify payment' });
     }
 });
 
 // ─── POST /api/billing/razorpay/webhook ───────────────────────────────────────
-// Handles recurring charges + lifecycle events. Mounted with express.raw in
-// server.ts so the signature can be verified against the raw body.
+// Handles charges + lifecycle events for search AND hosting subscriptions.
+// Mounted with express.raw in server.ts so the signature is checked against the
+// raw body. Each x-razorpay-event-id is processed once (Razorpay delivers
+// at-least-once); a failure answers 500 so Razorpay retries it.
 router.post('/razorpay/webhook', async (req: AuthRequest, res: Response) => {
+    const config = await getRazorpayConfig().catch(() => null);
+    const signature = req.headers['x-razorpay-signature'] as string;
+    const rawBody: Buffer = Buffer.isBuffer(req.body) ? req.body : Buffer.from('');
+
+    if (!config?.webhook_secret) {
+        console.error('[Razorpay webhook] no webhook secret configured');
+        return res.status(500).json({ error: 'Webhook secret not configured' });
+    }
+    if (!signature || rawBody.length === 0 || !verifyWebhookSignature(rawBody, signature, config.webhook_secret)) {
+        return res.status(400).json({ error: 'Invalid webhook signature' });
+    }
+
+    let event: any;
     try {
-        const config = await getRazorpayConfig();
-        const signature = req.headers['x-razorpay-signature'] as string;
+        event = JSON.parse(rawBody.toString('utf8'));
+    } catch {
+        return res.status(400).json({ error: 'Invalid JSON' });
+    }
 
-        if (!signature || !config.webhook_secret) {
-            return res.status(400).json({ error: 'Missing webhook signature or secret' });
-        }
+    const eventId = String(req.headers['x-razorpay-event-id'] || '')
+        || crypto.createHash('sha256').update(rawBody).digest('hex').slice(0, 64);
+    const entityId = event?.payload?.subscription?.entity?.id || event?.payload?.payment?.entity?.id || null;
 
-        const rawBody: Buffer = req.body; // Buffer (express.raw)
-        if (!verifyWebhookSignature(rawBody, signature, config.webhook_secret)) {
-            return res.status(400).json({ error: 'Invalid webhook signature' });
-        }
+    try {
+        await ensurePaymentTables();
 
-        const event = JSON.parse(rawBody.toString('utf8'));
-        console.log(`[Razorpay webhook] ${event.event}`);
-
-        switch (event.event) {
-            case 'subscription.charged': {
-                // Recurring renewal payment
-                const sub = event.payload?.subscription?.entity;
-                const payment = event.payload?.payment?.entity;
-                if (!sub) break;
-
-                const tenantId = parseInt(sub.notes?.tenant_id || '0');
-                const planId = parseInt(sub.notes?.plan_id || '0');
-                const product = sub.notes?.product === 'hosting' ? 'hosting' : 'search';
-                if (!tenantId || !planId) break;
-
-                // Skip the very first charge — already handled by /verify
-                const existing: any = payment?.id
-                    ? await query('SELECT id FROM orders WHERE razorpay_payment_id = ?', [payment.id])
-                    : [];
-                if (existing.length > 0) break;
-
-                const table = product === 'hosting' ? 'hosting_plans' : 'plans';
-                const plans: any = await query(`SELECT * FROM ${table} WHERE id = ?`, [planId]);
-                if (!plans || plans.length === 0) break;
-                const plan = plans[0];
-
-                if (product === 'hosting') {
-                    await activateHostingSubscription({
-                        tenantId,
-                        plan,
-                        currency: config.currency,
-                        billingReason: 'hosting_cycle',
-                        razorpaySubscriptionId: sub.id,
-                    });
-                } else {
-                    await activateSubscription({
-                        tenantId,
-                        plan,
-                        currency: config.currency,
-                        billingReason: 'subscription_cycle',
-                        razorpaySubscriptionId: sub.id,
-                    });
-                }
-
-                if (payment?.id) {
-                    await recordOrder({
-                        tenantId,
-                        planId: plan.id,
-                        planName: product === 'hosting' ? `Hosting — ${plan.name}` : plan.name,
-                        razorpaySubscriptionId: sub.id,
-                        razorpayPaymentId: payment.id,
-                        amount: Number(payment.amount || 0) / 100,
-                        currency: payment.currency || config.currency,
-                        status: 'captured',
-                        method: payment.method || null,
-                        email: payment.email || null,
-                        contact: payment.contact || null,
-                        notes: 'Recurring subscription charge',
-                        product,
-                    });
-                }
-                break;
+        // Claim the event. A processed event is acknowledged without re-running;
+        // one still being processed by a concurrent delivery is retried later.
+        const claim: any = await query(
+            'INSERT IGNORE INTO razorpay_webhook_events (event_id, event, entity_id) VALUES (?, ?, ?)',
+            [eventId, event?.event || 'unknown', entityId]
+        );
+        if (claim.affectedRows === 0) {
+            const rows: any = await query('SELECT status, updated_at FROM razorpay_webhook_events WHERE event_id = ?', [eventId]);
+            const prev = rows?.[0];
+            if (prev?.status === 'processed') {
+                return res.json({ received: true, duplicate: true });
             }
-
-            case 'subscription.cancelled':
-            case 'subscription.halted': {
-                const sub = event.payload?.subscription?.entity;
-                if (!sub) break;
-
-                if (sub.notes?.product === 'hosting') {
-                    // Hosting cancellation — only the hosting service stops
-                    await query(
-                        "UPDATE hosting_subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE razorpay_subscription_id = ?",
-                        [sub.id]
-                    );
-                    break;
-                }
-
-                await query(
-                    "UPDATE subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE razorpay_subscription_id = ?",
-                    [sub.id]
-                );
-
-                const rows: any = await query(
-                    'SELECT tenant_id FROM subscriptions WHERE razorpay_subscription_id = ? LIMIT 1',
-                    [sub.id]
-                );
-                if (rows.length > 0) {
-                    // Only suspend if the tenant has no OTHER active subscription —
-                    // plan upgrades cancel the old gateway subscription while the new one is live.
-                    const stillActive: any = await query(
-                        "SELECT id FROM subscriptions WHERE tenant_id = ? AND status = 'active' LIMIT 1",
-                        [rows[0].tenant_id]
-                    );
-                    if (stillActive.length === 0) {
-                        await query("UPDATE tenants SET status = 'suspended' WHERE id = ?", [rows[0].tenant_id]);
-
-                        // Dunning: tell the customer their service is paused (halted = payment retries exhausted)
-                        if (event.event === 'subscription.halted') {
-                            const tInfo: any = await query('SELECT email, store_name FROM tenants WHERE id = ?', [rows[0].tenant_id]);
-                            if (tInfo.length > 0) {
-                                const planName = sub.notes?.product === 'hosting' ? 'Hosting' : 'Cataseek Search';
-                                sendSubscriptionPausedEmail(tInfo[0].email, tInfo[0].store_name, planName)
-                                    .catch((e) => console.error('Paused email error:', e));
-                            }
-                        }
-                    }
-                }
-                break;
-            }
-
-            case 'payment.failed': {
-                const payment = event.payload?.payment?.entity;
-                if (!payment) break;
-
-                const tenantId = parseInt(payment.notes?.tenant_id || '0');
-                if (tenantId) {
-                    await recordOrder({
-                        tenantId,
-                        razorpayPaymentId: payment.id,
-                        razorpayOrderId: payment.order_id || null,
-                        amount: Number(payment.amount || 0) / 100,
-                        currency: payment.currency || config.currency,
-                        status: 'failed',
-                        method: payment.method || null,
-                        email: payment.email || null,
-                        contact: payment.contact || null,
-                        notes: payment.error_description || 'Payment failed',
-                        product: payment.notes?.product === 'hosting' ? 'hosting' : 'search',
-                    });
-
-                    // Dunning: notify the customer so they can fix payment before service pauses
-                    const tInfo: any = await query('SELECT email, store_name FROM tenants WHERE id = ?', [tenantId]);
-                    if (tInfo.length > 0) {
-                        const planName = payment.notes?.product === 'hosting' ? 'Hosting' : 'Cataseek Search';
-                        sendPaymentFailedEmail(tInfo[0].email, tInfo[0].store_name, planName, payment.error_description || undefined)
-                            .catch((e) => console.error('Payment-failed email error:', e));
-                    }
-                }
-                break;
+            const stale = prev?.status === 'failed'
+                || (prev?.status === 'processing' && Date.now() - new Date(prev.updated_at).getTime() > 2 * 60 * 1000);
+            const reclaimed: any = stale
+                ? await query(
+                    "UPDATE razorpay_webhook_events SET status = 'processing', attempts = attempts + 1 WHERE event_id = ? AND status = ?",
+                    [eventId, prev.status]
+                )
+                : { affectedRows: 0 };
+            if (reclaimed.affectedRows === 0) {
+                return res.status(409).json({ error: 'Event is already being processed' });
             }
         }
 
+        const outcome = await processWebhookEvent(event);
+        await query(
+            "UPDATE razorpay_webhook_events SET status = 'processed', processed_at = NOW(), last_error = NULL WHERE event_id = ?",
+            [eventId]
+        );
+        console.log(`[Razorpay webhook] ${event.event} ${entityId || ''} → ${outcome}`);
         res.json({ received: true });
-    } catch (error) {
-        console.error('Razorpay webhook error:', error);
+    } catch (error: any) {
+        console.error(`[Razorpay webhook] ${event?.event} failed:`, error);
+        await query(
+            "UPDATE razorpay_webhook_events SET status = 'failed', last_error = ? WHERE event_id = ?",
+            [String(error?.message || error).slice(0, 2000), eventId]
+        ).catch(() => { /* best effort */ });
         res.status(500).json({ error: 'Webhook handler failed' });
     }
 });
@@ -700,6 +596,10 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
         const sub = await getActiveSubscriptionWithPlan(tenantId);
         if (!sub) return res.status(404).json({ error: 'No active subscription found' });
 
+        if (sub.cancel_at_period_end) {
+            return res.status(400).json({ error: `Your subscription is cancelled and ends on ${new Date(sub.current_period_end).toLocaleDateString()}. You can choose a new plan once it ends.` });
+        }
+
         if (Number(newPlan.id) === Number(sub.plan_id)) {
             return res.status(400).json({ error: 'You are already on this plan' });
         }
@@ -710,25 +610,29 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
             return res.status(400).json({ error: 'This is not a downgrade — use the regular checkout to switch plans.' });
         }
 
-        // Gateway-linked subscription: schedule the plan swap at Razorpay too, at
-        // cycle end, so the next auto-charge bills the new (lower) plan instead of
-        // the current one. Notes carry the new plan id so the renewal webhook
-        // activates the right plan locally when it fires.
+        // Gateway-linked subscription: schedule the plan swap at Razorpay too so the
+        // next auto-charge bills the new (lower) plan. The renewal webhook maps the
+        // charged Razorpay plan back to the new Cataseek plan.
+        //   active        → swap at cycle_end (the current Razorpay cycle is paid)
+        //   authenticated → prepaid plan-change subscription whose first recurring
+        //                   charge is at current_period_end: no Razorpay cycle has
+        //                   started yet, so swap 'now' — that first charge is then
+        //                   already on the lower plan.
         if (sub.razorpay_subscription_id) {
+            if (sub.gateway_status === 'created') {
+                return res.status(400).json({ error: 'Your subscription is still being set up with the payment gateway. Please try again in a few minutes.' });
+            }
+            const scheduleChangeAt = sub.gateway_status === 'authenticated' ? 'now' : 'cycle_end';
+            // Razorpay rejects `notes` on a plan update ("notes is/are not required");
+            // the subscription keeps its original notes, so the new plan is resolved
+            // from the charged Razorpay plan_id via the plan mapping, not from notes.
             try {
                 const { client } = await getRazorpayClient();
-                const rzpPlanId = await ensureRazorpayPlan(newPlan);
-                const tenants: any = await query('SELECT store_name FROM tenants WHERE id = ?', [tenantId]);
+                const rzpPlanId = await resolveRazorpayPlanForCheckout(newPlan, 'plans');
                 await client.subscriptions.update(sub.razorpay_subscription_id, {
                     plan_id: rzpPlanId,
-                    schedule_change_at: 'cycle_end',
-                    notes: {
-                        tenant_id: String(tenantId),
-                        plan_id: String(newPlan.id),
-                        store_name: tenants?.[0]?.store_name || '',
-                        product: 'search',
-                    },
-                });
+                    schedule_change_at: scheduleChangeAt,
+                } as any);
             } catch (e: any) {
                 console.error('Razorpay downgrade schedule error:', e?.error?.description || e?.message);
                 return res.status(500).json({ error: 'Could not schedule the downgrade with the payment gateway. Please try again.' });
@@ -756,30 +660,15 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
 });
 
 // ─── POST /api/billing/cancel ─────────────────────────────────────────────────
-// Cancel the active subscription (at Razorpay too, if linked)
+// Paid plan: cancelled at Razorpay at cycle end, access until current_period_end.
+// Trial-scheduled plan: cancelled immediately, nothing is charged.
 router.post('/cancel', authenticateJWT, async (req: AuthRequest, res: Response) => {
     try {
-        const tenantId = req.user.id;
-        const subs: any = await query(
-            "SELECT id, razorpay_subscription_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' ORDER BY current_period_end DESC LIMIT 1",
-            [tenantId]
-        );
-        if (!subs || subs.length === 0) return res.status(404).json({ error: 'No active subscription found' });
-
-        const sub = subs[0];
-
-        if (sub.razorpay_subscription_id) {
-            try {
-                const { client } = await getRazorpayClient();
-                await client.subscriptions.cancel(sub.razorpay_subscription_id, true); // cancel at cycle end
-            } catch (e: any) {
-                console.warn('Razorpay cancel warning:', e?.error?.description || e?.message);
-            }
-        }
-
-        await query("UPDATE subscriptions SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?", [sub.id]);
-        res.json({ message: 'Subscription cancelled. Access remains until the end of the billing period.' });
-    } catch (error) {
+        await ensurePaymentTables();
+        const r = await requestCancel('search', req.user.id);
+        res.json({ message: r.message, accessUntil: r.accessUntil });
+    } catch (error: any) {
+        if (error instanceof BillingError) return res.status(error.status).json({ error: error.message });
         console.error('Cancel subscription error:', error);
         res.status(500).json({ error: 'Failed to cancel subscription' });
     }

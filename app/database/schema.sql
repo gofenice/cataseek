@@ -32,7 +32,6 @@ CREATE TABLE IF NOT EXISTS plans (
     max_requests_per_month INT NOT NULL,
     features JSON,
     is_active BOOLEAN DEFAULT TRUE,
-    stripe_price_id VARCHAR(100),
     -- Yearly billing: a monthly row is the source of truth; its yearly
     -- sibling is auto-generated/kept in sync (see plan-sync.service.ts).
     yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0,
@@ -46,8 +45,16 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     tenant_id INT NOT NULL,
     plan_id INT NOT NULL,
-    stripe_subscription_id VARCHAR(100) UNIQUE,
-    status ENUM('active', 'past_due', 'cancelled', 'incomplete') DEFAULT 'active',
+    razorpay_subscription_id VARCHAR(64) NULL,
+    -- Access state (see subscription-lifecycle.service.ts); gateway_status mirrors Razorpay
+    status ENUM('active', 'trialing', 'past_due', 'cancelled', 'incomplete') DEFAULT 'active',
+    gateway_status VARCHAR(20) NULL,
+    gateway_event_at BIGINT NULL,
+    checkout_type VARCHAR(20) NULL,
+    starts_at DATETIME NULL,
+    cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+    pending_plan_id INT NULL,
+    pending_plan_change_at DATETIME NULL,
     current_period_start DATETIME,
     current_period_end DATETIME,
     cancelled_at DATETIME,
@@ -56,7 +63,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     FOREIGN KEY (plan_id) REFERENCES plans(id),
     INDEX idx_tenant (tenant_id),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    INDEX idx_rzp_sub (razorpay_subscription_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- API Usage tracking
@@ -72,11 +80,38 @@ CREATE TABLE IF NOT EXISTS api_usage (
     INDEX idx_tenant_date (tenant_id, date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Insert default plans
-INSERT INTO plans (name, description, price, billing_period, max_products, max_requests_per_month, features) VALUES
-('Starter', 'Perfect for small stores', 29.99, 'monthly', 1000, 10000, '["Basic search", "1 store", "Email support"]'),
-('Professional', 'For growing businesses', 79.99, 'monthly', 10000, 100000, '["Advanced search", "Multi-language", "5 stores", "Priority support"]'),
-('Enterprise', 'For large enterprises', 199.99, 'monthly', 100000, 1000000, '["Custom search", "Unlimited stores", "Multi-language", "Multi-store", "24/7 support", "Dedicated account manager"]');
+-- Insert default plans (monthly roots; yearly siblings are generated from
+-- yearly_discount_percent at startup — see plan-sync.service.ts)
+INSERT INTO plans (name, description, price, billing_period, max_products, max_requests_per_month, features, yearly_discount_percent) VALUES
+('Starter', 'Perfect for small stores', 19.99, 'monthly', 1000, 10000, '["Basic search", "1 store", "Email support"]', 16.63),
+('Professional', 'For growing businesses', 49.99, 'monthly', 10000, 100000, '["Advanced search", "Multi-language", "5 stores", "Priority support"]', 16.65),
+('Enterprise', 'For large enterprises', 199.99, 'monthly', 100000, 1000000, '["Custom search", "Unlimited stores", "Multi-language", "Multi-store", "24/7 support", "Dedicated account manager"]', 16.66);
+
+-- Razorpay plan mapping per gateway mode (test/live) — see razorpay.service.ts
+CREATE TABLE IF NOT EXISTS razorpay_plan_mappings (
+    id               INT AUTO_INCREMENT PRIMARY KEY,
+    mode             ENUM('test','live') NOT NULL,
+    plan_table       ENUM('plans','hosting_plans') NOT NULL,
+    local_plan_id    INT NOT NULL,
+    razorpay_plan_id VARCHAR(64) NOT NULL,
+    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_local (mode, plan_table, local_plan_id),
+    UNIQUE KEY uq_rzp (mode, razorpay_plan_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Processed Razorpay webhook deliveries (x-razorpay-event-id)
+CREATE TABLE IF NOT EXISTS razorpay_webhook_events (
+    event_id     VARCHAR(64) PRIMARY KEY,
+    event        VARCHAR(64) NOT NULL,
+    entity_id    VARCHAR(64) NULL,
+    status       ENUM('processing','processed','failed') NOT NULL DEFAULT 'processing',
+    attempts     INT NOT NULL DEFAULT 1,
+    last_error   TEXT NULL,
+    received_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    processed_at DATETIME NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Note: Product tables are created dynamically per tenant with naming convention: products_{tenant_id}
 -- Example structure for reference:
@@ -116,10 +151,13 @@ CREATE TABLE IF NOT EXISTS invoices (
     period_start     DATETIME,
     period_end       DATETIME,
     paid_at          DATETIME,
+    -- Razorpay payment this invoice was issued for (one invoice per payment)
+    gateway_payment_id VARCHAR(64) NULL,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     INDEX idx_tenant (tenant_id),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    UNIQUE KEY uq_gateway_payment (gateway_payment_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Tenant domains table

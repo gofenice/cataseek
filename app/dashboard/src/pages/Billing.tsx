@@ -23,7 +23,10 @@ interface Subscription {
     plan_name: string;
     price: number;
     billing_period: string;
-    status: string;
+    status: string; // 'active' | 'trialing' (plan starts when the free trial ends)
+    gateway_status?: string | null; // Razorpay status — 'pending' = renewal payment retrying
+    cancel_at_period_end?: number | boolean;
+    starts_at?: string | null;
     current_period_end: string;
     max_requests_per_month: number;
     pending_plan_id?: number | null;
@@ -76,10 +79,12 @@ interface Confirmation {
     planName: string;
     price: number;
     billingPeriod: string;
-    invoiceNumber: string;
-    periodEnd: string;
+    invoiceNumber?: string;
+    periodEnd?: string;
     creditApplied?: number;
     firstCharge?: number;
+    trial?: boolean;          // subscribed during the free trial — nothing charged yet
+    firstChargeAt?: string;   // when the first payment happens (trial end)
 }
 
 declare global {
@@ -203,6 +208,12 @@ const Billing: React.FC = () => {
         setLoading(false);
     }, []);
 
+    // The result banner renders at the top of the page; bring it into view when
+    // the action was triggered from the plan cards further down.
+    useEffect(() => {
+        if (message) window.scrollTo({ top: 0, behavior: 'smooth' });
+    }, [message]);
+
     useEffect(() => { fetchData(); }, [fetchData]);
 
     const currencySymbol = CURRENCY_SYMBOLS[payConfig?.currency || 'USD'] || '$';
@@ -211,7 +222,7 @@ const Billing: React.FC = () => {
     const handleRazorpayCheckout = async (planId: number) => {
         // 1. Create the Razorpay subscription server-side
         const res = await api.post('/billing/razorpay/subscribe', { planId });
-        const { subscriptionId, keyId, plan, prefill } = res.data;
+        const { subscriptionId, keyId, plan, prefill, checkoutType, firstChargeAt } = res.data;
 
         // 2. Open Razorpay Checkout
         await loadRazorpayScript();
@@ -220,17 +231,19 @@ const Billing: React.FC = () => {
                 key: keyId,
                 subscription_id: subscriptionId,
                 name: 'Cataseek',
-                description: `${plan.name} Plan — ${plan.billing_period}`,
+                description: checkoutType === 'trial'
+                    ? `${plan.name} Plan — free until ${fmt(firstChargeAt)}, then ${plan.billing_period}`
+                    : `${plan.name} Plan — ${plan.billing_period}`,
                 prefill: { email: prefill?.email || '', name: prefill?.name || '' },
                 theme: { color: '#059669' },
                 handler: async (response: any) => {
                     // 3. Verify the payment signature server-side
                     try {
+                        // The server reads the plan from the Razorpay subscription itself
                         const verifyRes = await api.post('/billing/razorpay/verify', {
                             razorpay_payment_id: response.razorpay_payment_id,
                             razorpay_subscription_id: response.razorpay_subscription_id,
                             razorpay_signature: response.razorpay_signature,
-                            planId,
                         });
                         setConfirmation({
                             planName: verifyRes.data.plan.name,
@@ -240,6 +253,8 @@ const Billing: React.FC = () => {
                             periodEnd: verifyRes.data.periodEnd,
                             creditApplied: verifyRes.data.creditApplied,
                             firstCharge: verifyRes.data.firstCharge,
+                            trial: verifyRes.data.checkoutType === 'trial',
+                            firstChargeAt: verifyRes.data.firstChargeAt,
                         });
                         resolve();
                     } catch (err: any) {
@@ -258,7 +273,7 @@ const Billing: React.FC = () => {
     };
 
     const isDowngrade = (plan: Plan) =>
-        !!subscription && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(subscription.price, subscription.billing_period);
+        subscription?.status === 'active' && effectiveMonthlyPrice(plan.price, plan.billing_period) < effectiveMonthlyPrice(subscription.price, subscription.billing_period);
 
     const handleSelect = async (planId: number) => {
         setSubscribing(planId);
@@ -293,7 +308,10 @@ const Billing: React.FC = () => {
     };
 
     const handleCancel = async () => {
-        if (!window.confirm('Cancel your subscription? You keep access until the end of the current billing period.')) return;
+        const prompt = subscription?.status === 'trialing'
+            ? 'Cancel your scheduled plan? You will not be charged and your free trial continues until it ends.'
+            : 'Cancel your subscription? You keep access until the end of the current billing period.';
+        if (!window.confirm(prompt)) return;
         setCancelling(true);
         setMessage('');
         try {
@@ -391,9 +409,13 @@ const Billing: React.FC = () => {
                             <PartyPopper size={34} color="#10b981" />
                         </div>
                         <div>
-                            <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 6px' }}>Payment Successful!</h2>
+                            <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 6px' }}>
+                                {confirmation.trial ? 'Plan Scheduled!' : 'Payment Successful!'}
+                            </h2>
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0 }}>
-                                Your subscription is now active. A copy of the invoice has been emailed to you.
+                                {confirmation.trial
+                                    ? 'Your free trial continues. Nothing has been charged — your plan starts automatically when the trial ends.'
+                                    : 'Your subscription is now active. A copy of the invoice has been emailed to you.'}
                             </p>
                         </div>
                         <div style={{ background: 'rgba(20,32,26,0.06)', borderRadius: 10, padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
@@ -404,8 +426,12 @@ const Billing: React.FC = () => {
                                     ['Unused plan credit', `−${currencySymbol}${Number(confirmation.creditApplied).toFixed(2)}`],
                                     ['First payment', `${currencySymbol}${Number(confirmation.firstCharge).toFixed(2)}`],
                                 ] : []),
-                                ['Invoice', confirmation.invoiceNumber],
-                                ['Next billing date', fmt(confirmation.periodEnd)],
+                                ...(confirmation.trial ? [
+                                    ['First payment', fmt(confirmation.firstChargeAt || null)],
+                                ] : [
+                                    ['Invoice', confirmation.invoiceNumber || '—'],
+                                    ['Next billing date', fmt(confirmation.periodEnd || null)],
+                                ]),
                             ].map(([k, v]) => (
                                 <div key={k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
                                     <span style={{ color: 'var(--text-muted)' }}>{k}</span>
@@ -464,14 +490,30 @@ const Billing: React.FC = () => {
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>
                                 {currencySymbol}{subscription.price} / {subscription.billing_period}
                             </div>
-                            <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
-                            </div>
+                            {subscription.status === 'trialing' ? (
+                                <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <Clock size={12} /> {subscription.plan_name} starts {fmt(subscription.starts_at || null)} — free trial until then
+                                </div>
+                            ) : subscription.cancel_at_period_end ? (
+                                <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <XCircle size={12} /> Cancelled · access until {fmt(subscription.current_period_end)}
+                                </div>
+                            ) : (
+                                <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <CheckCircle size={12} /> Active · renews {fmt(subscription.current_period_end)}
+                                </div>
+                            )}
+                            {subscription.gateway_status === 'pending' && (
+                                <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <AlertCircle size={12} /> Last payment failed — Razorpay is retrying
+                                </div>
+                            )}
                             {subscription.pending_plan_id && (
                                 <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <Clock size={12} /> Downgrading to {subscription.pending_plan_name} on {fmt(subscription.current_period_end)}
                                 </div>
                             )}
+                            {!subscription.cancel_at_period_end && (
                             <button
                                 onClick={handleCancel}
                                 disabled={cancelling}
@@ -483,8 +525,9 @@ const Billing: React.FC = () => {
                                     alignSelf: 'flex-start',
                                 }}
                             >
-                                {cancelling ? 'Cancelling…' : 'Cancel Subscription'}
+                                {cancelling ? 'Cancelling…' : subscription.status === 'trialing' ? 'Cancel Scheduled Plan' : 'Cancel Subscription'}
                             </button>
+                            )}
                         </>
                     ) : (
                         <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>

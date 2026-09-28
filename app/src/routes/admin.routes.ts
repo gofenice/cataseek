@@ -4,8 +4,16 @@ import { query } from '../config/database';
 import { MODULES_DIR, removeModuleFile } from '../services/modules.service';
 import { authenticateJWT, requireAdmin, AuthRequest } from '../middleware/auth';
 import { deleteTenantIndex } from '../config/meilisearch';
-import { getRazorpayConfig, saveRazorpayConfig, maskSecret, getCompanyConfig, saveCompanyConfig } from '../services/payment-settings.service';
-import { getRazorpayClient, ensurePaymentTables } from '../services/razorpay.service';
+import { getRazorpayConfig, saveRazorpayConfig, maskSecret, getCompanyConfig, saveCompanyConfig, modeFromKeyId } from '../services/payment-settings.service';
+import {
+    getRazorpayClient,
+    ensurePaymentTables,
+    setPlanMapping,
+    comparePlan,
+    createAndMapRazorpayPlan,
+    PlanMappingError,
+    PlanTable,
+} from '../services/razorpay.service';
 import { ensureHostingTables } from '../services/hosting.service';
 import { syncYearlyVariant } from '../services/plan-sync.service';
 import { getGoogleAuthConfig, saveGoogleAuthConfig } from '../services/google-auth-settings.service';
@@ -496,6 +504,7 @@ router.get('/payment-settings', async (req: AuthRequest, res: Response) => {
                 currency: config.currency,
                 has_key_secret: !!config.key_secret,
                 has_webhook_secret: !!config.webhook_secret,
+                key_source: config.key_source,
             },
         });
     } catch (error) {
@@ -515,6 +524,11 @@ router.put('/payment-settings', async (req: AuthRequest, res: Response) => {
         }
         if (key_id !== undefined && key_id && !/^rzp_(test|live)_/.test(key_id)) {
             return res.status(400).json({ error: 'key_id should start with rzp_test_ or rzp_live_' });
+        }
+        // Mode follows the key prefix — reject a combination that can't work
+        const keyMode = key_id ? modeFromKeyId(String(key_id)) : null;
+        if (keyMode && mode && keyMode !== mode) {
+            return res.status(400).json({ error: `Mode is '${mode}' but the key id is a ${keyMode} key` });
         }
 
         await saveRazorpayConfig({ enabled, mode, key_id, key_secret, webhook_secret, currency });
@@ -588,6 +602,92 @@ router.post('/payment-settings/test', async (req: AuthRequest, res: Response) =>
     } catch (error: any) {
         const detail = error?.error?.description || error?.message || 'Unknown error';
         res.status(400).json({ ok: false, error: `Connection failed: ${detail}` });
+    }
+});
+
+// ─── Razorpay plan mapping ───────────────────────────────────────────────────
+// Each Cataseek plan (search + hosting) maps to a Razorpay plan per mode. Plans
+// are created in the Razorpay Dashboard; checkout never creates them.
+const PLAN_TABLES: PlanTable[] = ['plans', 'hosting_plans'];
+
+// GET /api/admin/razorpay/plan-mappings
+router.get('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) => {
+    try {
+        await ensurePaymentTables();
+        await ensureHostingTables();
+        const config = await getRazorpayConfig(true);
+        const mappings: any = await query('SELECT mode, plan_table, local_plan_id, razorpay_plan_id FROM razorpay_plan_mappings');
+        const plans: any[] = [];
+        for (const table of PLAN_TABLES) {
+            const rows: any = await query(`SELECT id, name, price, billing_period, is_active FROM ${table} ORDER BY billing_period, price`);
+            for (const p of rows) {
+                const find = (mode: string) => mappings.find((m: any) => m.mode === mode && m.plan_table === table && Number(m.local_plan_id) === Number(p.id))?.razorpay_plan_id || null;
+                plans.push({ table, ...p, test_plan_id: find('test'), live_plan_id: find('live') });
+            }
+        }
+        res.json({ mode: config.mode, currency: config.currency, plans });
+    } catch (error) {
+        console.error('Plan mapping list error:', error);
+        res.status(500).json({ error: 'Failed to fetch plan mappings' });
+    }
+});
+
+// PUT /api/admin/razorpay/plan-mappings  { table, planId, mode, razorpayPlanId }  (empty id = unmap)
+router.put('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) => {
+    try {
+        const { table, planId, mode, razorpayPlanId } = req.body;
+        if (!PLAN_TABLES.includes(table)) return res.status(400).json({ error: 'table must be plans or hosting_plans' });
+        if (!['test', 'live'].includes(mode)) return res.status(400).json({ error: "mode must be 'test' or 'live'" });
+        const rows: any = await query(`SELECT id FROM ${table} WHERE id = ?`, [planId]);
+        if (!rows || rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
+        await setPlanMapping(mode, table, Number(planId), String(razorpayPlanId || '').trim() || null);
+        res.json({ message: 'Plan mapping saved' });
+    } catch (error: any) {
+        if (error instanceof PlanMappingError) return res.status(400).json({ error: error.message });
+        if (error?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'That Razorpay plan is already mapped to another Cataseek plan' });
+        console.error('Plan mapping save error:', error);
+        res.status(500).json({ error: 'Failed to save plan mapping' });
+    }
+});
+
+// POST /api/admin/razorpay/plan-mappings/verify — fetch each mapped plan (current
+// mode) from Razorpay and compare amount, currency and billing period.
+router.post('/razorpay/plan-mappings/verify', async (req: AuthRequest, res: Response) => {
+    try {
+        const { client, config } = await getRazorpayClient();
+        const mappings: any = await query('SELECT plan_table, local_plan_id, razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ?', [config.mode]);
+        const results: any[] = [];
+        for (const m of mappings) {
+            const rows: any = await query(`SELECT * FROM ${m.plan_table} WHERE id = ?`, [m.local_plan_id]);
+            const plan = rows?.[0];
+            if (!plan) { results.push({ ...m, ok: false, problems: ['Cataseek plan no longer exists'] }); continue; }
+            try {
+                const rzpPlan: any = await client.plans.fetch(m.razorpay_plan_id);
+                const problems = comparePlan(rzpPlan, plan, config.currency);
+                results.push({ ...m, name: plan.name, billing_period: plan.billing_period, razorpay_name: rzpPlan?.item?.name, ok: problems.length === 0, problems });
+            } catch (e: any) {
+                results.push({ ...m, name: plan.name, billing_period: plan.billing_period, ok: false, problems: [e?.error?.description || e?.message || 'Fetch failed'] });
+            }
+        }
+        res.json({ mode: config.mode, results });
+    } catch (error: any) {
+        res.status(400).json({ error: error?.message || 'Verification failed' });
+    }
+});
+
+// POST /api/admin/razorpay/plan-mappings/create  { table, planId } — explicit,
+// admin-triggered creation of a Razorpay plan for an unmapped Cataseek plan.
+router.post('/razorpay/plan-mappings/create', async (req: AuthRequest, res: Response) => {
+    try {
+        const { table, planId } = req.body;
+        if (!PLAN_TABLES.includes(table)) return res.status(400).json({ error: 'table must be plans or hosting_plans' });
+        const rows: any = await query(`SELECT * FROM ${table} WHERE id = ?`, [planId]);
+        if (!rows || rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
+        const id = await createAndMapRazorpayPlan(rows[0], table);
+        res.json({ message: `Created and mapped Razorpay plan ${id}`, razorpay_plan_id: id });
+    } catch (error: any) {
+        if (error instanceof PlanMappingError) return res.status(400).json({ error: error.message });
+        res.status(400).json({ error: error?.error?.description || error?.message || 'Failed to create Razorpay plan' });
     }
 });
 

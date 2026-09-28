@@ -38,6 +38,16 @@ export const invalidateTenantApiCache = (apiKey: string) => {
   tenantCache.delete(apiKey);
 };
 
+// Call when a tenant's subscription changes (activation, cancellation, suspension)
+// so search limits are re-read on the next request instead of after the 15 min TTL.
+export const invalidateTenantPlanCache = (tenantId: number) => {
+  planCache.delete(`plan:${tenantId}`);
+};
+
+// A subscribed trial user's first charge is scheduled for trial_ends_at; keep the
+// trial running for a short grace window while Razorpay processes that charge.
+const TRIAL_FIRST_CHARGE_GRACE_HOURS = 24;
+
 
 /**
  * A failed database call is NOT an authentication failure.
@@ -299,6 +309,7 @@ export const checkPlanLimits = async (req: AuthRequest, res: Response, next: Nex
          FROM subscriptions s
          JOIN plans p ON s.plan_id = p.id
          WHERE s.tenant_id = ? AND s.status = 'active'
+           AND NOT (s.cancel_at_period_end = 1 AND s.current_period_end <= NOW())
          ORDER BY s.current_period_end DESC LIMIT 1`,
         [tenantId]
       );
@@ -306,10 +317,16 @@ export const checkPlanLimits = async (req: AuthRequest, res: Response, next: Nex
       if (!subscriptions || subscriptions.length === 0) {
         // Trial fallback
         const tenant: any = await query(
-          'SELECT status, trial_ends_at FROM tenants WHERE id = ?',
+          `SELECT t.status, t.trial_ends_at,
+                  EXISTS (SELECT 1 FROM subscriptions s
+                          WHERE s.tenant_id = t.id AND s.status = 'trialing'
+                            AND s.starts_at > DATE_SUB(NOW(), INTERVAL ${TRIAL_FIRST_CHARGE_GRACE_HOURS} HOUR)) AS awaiting_first_charge
+           FROM tenants t WHERE t.id = ?`,
           [tenantId]
         );
-        if (tenant[0]?.status === 'trial' && new Date(tenant[0].trial_ends_at) > new Date()) {
+        const trialActive = tenant[0]?.status === 'trial'
+          && (new Date(tenant[0].trial_ends_at) > new Date() || !!tenant[0].awaiting_first_charge);
+        if (trialActive) {
           planData = { max_products: 100, max_requests_per_month: 1000, isTrial: true };
           planCache.set(planKey, planData, 15 * 60 * 1000);
           req.tenant = { ...req.tenant, maxProducts: 100, maxRequests: 1000 };

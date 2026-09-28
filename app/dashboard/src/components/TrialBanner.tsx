@@ -8,6 +8,8 @@ import api from '../services/api';
 const TrialBanner: React.FC = () => {
     const [info, setInfo] = useState<{ status: string; trial_ends_at: string | null; search_enabled?: boolean | number; email_verified?: boolean | number } | null>(null);
     const [pastDue, setPastDue] = useState(false);
+    // Plan the customer already picked, starting (first charge) when the trial ends
+    const [scheduledPlan, setScheduledPlan] = useState<string | null>(null);
     const [resent, setResent] = useState(false);
     const [resending, setResending] = useState(false);
 
@@ -15,10 +17,14 @@ const TrialBanner: React.FC = () => {
         api.get('/tenants/profile')
             .then(res => setInfo(res.data.tenant))
             .catch(() => setInfo(null));
-        // Detect a payment-retrying subscription (Razorpay marks it past_due)
+        // Detect a payment-retrying subscription (Razorpay status 'pending')
         api.get('/plans/subscription')
-            .then(res => setPastDue(res.data.subscription?.status === 'past_due'))
-            .catch(() => setPastDue(false));
+            .then(res => {
+                const sub = res.data.subscription;
+                setPastDue(sub?.gateway_status === 'pending');
+                setScheduledPlan(sub?.status === 'trialing' ? sub.plan_name : null);
+            })
+            .catch(() => { setPastDue(false); setScheduledPlan(null); });
     }, []);
 
     const pastDueBanner = pastDue ? (
@@ -97,6 +103,11 @@ const TrialBanner: React.FC = () => {
                 <span>
                     <strong>Your free trial has ended.</strong> Search service is paused for your store —
                     choose a plan to reactivate it.
+                </span>
+            ) : scheduledPlan ? (
+                <span>
+                    <strong>{daysLeft} day{daysLeft === 1 ? '' : 's'} left</strong> in your free trial.
+                    Your {scheduledPlan} plan starts automatically on {new Date(info.trial_ends_at).toLocaleDateString()}.
                 </span>
             ) : (
                 <span>

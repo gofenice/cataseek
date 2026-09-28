@@ -35,6 +35,8 @@ EXCLUDES=(
   --exclude 'uploads'           --exclude 'logs'
   # rollback copies taken by previous deploys
   --exclude '*.bak-*'
+  # local-only developer notes / tooling (git-ignored, never for the server)
+  --exclude '.razorpay-migration'  --exclude '.claude'
 )
 
 echo "==> syncing $SRC/ -> $REMOTE:$APP_PATH/"
