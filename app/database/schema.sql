@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     FOREIGN KEY (plan_id) REFERENCES plans(id),
     INDEX idx_tenant (tenant_id),
     INDEX idx_status (status),
-    INDEX idx_rzp_sub (razorpay_subscription_id)
+    INDEX idx_rzp_sub (razorpay_subscription_id),
+    -- one local row per Razorpay subscription (NULL for demo-mode rows)
+    UNIQUE KEY uq_rzp_subscription (razorpay_subscription_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- API Usage tracking

@@ -121,6 +121,9 @@ export async function getRazorpayConfig(skipCache = false): Promise<RazorpayConf
 
     // Environment variables win over the admin-saved values, so each deployment
     // (local test keys, production live keys) can carry its own credentials.
+    // Keys and webhook secret always come from the SAME source: a webhook secret
+    // from one account/mode with keys from another would silently reject every
+    // webhook. With env keys, RAZORPAY_WEBHOOK_SECRET must be set in env too.
     const envKeyId = (process.env.RAZORPAY_KEY_ID || '').trim();
     const envKeySecret = (process.env.RAZORPAY_KEY_SECRET || '').trim();
     const useEnvKeys = !!(envKeyId && envKeySecret);
@@ -131,10 +134,15 @@ export async function getRazorpayConfig(skipCache = false): Promise<RazorpayConf
         mode: modeFromKeyId(keyId) || (map.razorpay_mode === 'live' ? 'live' : 'test'),
         key_id: keyId,
         key_secret: useEnvKeys ? envKeySecret : (map.razorpay_key_secret || ''),
-        webhook_secret: (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim() || map.razorpay_webhook_secret || '',
+        webhook_secret: useEnvKeys
+            ? (process.env.RAZORPAY_WEBHOOK_SECRET || '').trim()
+            : (map.razorpay_webhook_secret || ''),
         currency: map.payment_currency || 'INR',
         key_source: useEnvKeys ? 'env' : 'db',
     };
+    if (useEnvKeys && !config.webhook_secret) {
+        console.warn('[payments] RAZORPAY_KEY_ID/SECRET are set in env but RAZORPAY_WEBHOOK_SECRET is not — webhooks will be rejected');
+    }
 
     cache = { value: config, expiresAt: Date.now() + 60 * 1000 };
     return config;

@@ -685,12 +685,14 @@ router.delete('/account', authenticateJWT, async (req: AuthRequest, res: Respons
 
     const tenantId = req.user.id;
 
-    // 1. Cancel any active subscriptions at the gateway (search + hosting)
+    // 1. Cancel every live gateway subscription (search + hosting): paid, scheduled
+    //    to start at trial end, or paused after failed payments — any of them
+    //    could still charge the card after the account is gone.
     try {
       const activeSubs: any = await query(
-        `SELECT razorpay_subscription_id FROM subscriptions WHERE tenant_id = ? AND status = 'active' AND razorpay_subscription_id IS NOT NULL
+        `SELECT razorpay_subscription_id FROM subscriptions WHERE tenant_id = ? AND status IN ('active','trialing','past_due') AND razorpay_subscription_id IS NOT NULL
          UNION
-         SELECT razorpay_subscription_id FROM hosting_subscriptions WHERE tenant_id = ? AND status = 'active' AND razorpay_subscription_id IS NOT NULL`,
+         SELECT razorpay_subscription_id FROM hosting_subscriptions WHERE tenant_id = ? AND status IN ('active','trialing','past_due') AND razorpay_subscription_id IS NOT NULL`,
         [tenantId, tenantId]
       );
       if (activeSubs.length > 0) {

@@ -272,11 +272,16 @@ export async function recordCharge(o: {
         // Subscription unknown locally (e.g. created before this code) — adopt it
         const tenantId = parseInt(rzpSub.notes?.tenant_id || '0');
         if (!tenantId) throw new Error(`Razorpay subscription ${rzpSub.id} has no tenant_id note`);
-        await createCheckoutRecord({
-            product, tenantId, planId: plan.id, razorpaySubscriptionId: rzpSub.id,
-            checkoutType: (rzpSub.notes?.checkout_type as CheckoutType) || 'immediate',
-            startsAt: unixToDate(rzpSub.start_at),
-        });
+        try {
+            await createCheckoutRecord({
+                product, tenantId, planId: plan.id, razorpaySubscriptionId: rzpSub.id,
+                checkoutType: (rzpSub.notes?.checkout_type as CheckoutType) || 'immediate',
+                startsAt: unixToDate(rzpSub.start_at),
+            });
+        } catch (e: any) {
+            // A concurrent delivery adopted it first (unique razorpay_subscription_id)
+            if (e?.code !== 'ER_DUP_ENTRY') throw e;
+        }
         row = await findSubscriptionByGatewayId(product, rzpSub.id);
     }
     const tenantId = Number(row.tenant_id);

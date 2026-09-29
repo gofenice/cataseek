@@ -40,6 +40,24 @@ export async function ensureSubscriptionLifecycleColumns(table: 'subscriptions' 
     for (const sql of alters) {
         try { await query(sql); } catch (_) { /* exists */ }
     }
+
+    // One local row per Razorpay subscription (NULLs allowed for demo-mode rows).
+    // Old code inserted a new row per renewal with the same id — if such legacy
+    // duplicates exist, leave them and say so rather than failing startup.
+    const hasUnique: any = await query(`SHOW INDEX FROM ${table} WHERE Key_name = 'uq_rzp_subscription'`);
+    if (!hasUnique || hasUnique.length === 0) {
+        const dupes: any = await query(
+            `SELECT razorpay_subscription_id, COUNT(*) AS n FROM ${table}
+             WHERE razorpay_subscription_id IS NOT NULL GROUP BY razorpay_subscription_id HAVING n > 1 LIMIT 5`
+        );
+        if (dupes.length > 0) {
+            console.warn(`[migration] ${table}.razorpay_subscription_id has duplicates (${dupes.map((d: any) => d.razorpay_subscription_id).join(', ')}) — unique index not added`);
+        } else {
+            try {
+                await query(`ALTER TABLE ${table} ADD UNIQUE INDEX uq_rzp_subscription (razorpay_subscription_id)`);
+            } catch (e) { console.error(`[migration] ${table} unique index error:`, e); }
+        }
+    }
 }
 
 // Memoised: concurrent first callers share one run (backfillYearlyVariants must not race)

@@ -383,7 +383,10 @@ const Billing: React.FC = () => {
         </div>
     );
 
-    const currentPlanId = subscription?.plan_id;
+    // A paused subscription (past_due) is shown but grants nothing, so its plan
+    // stays selectable to restart billing.
+    const paused = subscription?.status === 'past_due';
+    const currentPlanId = paused ? undefined : subscription?.plan_id;
 
     // Tiers are grouped by their monthly root; the toggle swaps in each
     // tier's yearly sibling (linked via parent_plan_id) when selected.
@@ -484,13 +487,17 @@ const Billing: React.FC = () => {
                         <CreditCard size={16} color="var(--primary)" />
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Plan</span>
                     </div>
-                    <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)' }}>{usage?.planName || 'Trial'}</div>
+                    <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)' }}>{paused ? subscription!.plan_name : usage?.planName || 'Trial'}</div>
                     {subscription ? (
                         <>
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>
                                 {currencySymbol}{subscription.price} / {subscription.billing_period}
                             </div>
-                            {subscription.status === 'trialing' ? (
+                            {paused ? (
+                                <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <XCircle size={12} /> Paused — payments failed after several retries. Choose a plan below to restart.
+                                </div>
+                            ) : subscription.status === 'trialing' ? (
                                 <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <Clock size={12} /> {subscription.plan_name} starts {fmt(subscription.starts_at || null)} — free trial until then
                                 </div>
@@ -513,7 +520,7 @@ const Billing: React.FC = () => {
                                     <Clock size={12} /> Downgrading to {subscription.pending_plan_name} on {fmt(subscription.current_period_end)}
                                 </div>
                             )}
-                            {!subscription.cancel_at_period_end && (
+                            {!subscription.cancel_at_period_end && !paused && (
                             <button
                                 onClick={handleCancel}
                                 disabled={cancelling}

@@ -359,6 +359,16 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             return res.status(400).json({ error: 'Use POST /api/billing/downgrade to schedule a plan downgrade.' });
         }
 
+        // During the trial a DIFFERENT plan replaces the scheduled one (handled on
+        // authentication); the SAME plan again would only open a duplicate mandate.
+        const scheduled: any = await query(
+            "SELECT id FROM subscriptions WHERE tenant_id = ? AND status = 'trialing' AND plan_id = ? LIMIT 1",
+            [tenantId, plan.id]
+        );
+        if (scheduled.length > 0) {
+            return res.status(400).json({ error: 'This plan is already scheduled to start when your free trial ends.' });
+        }
+
         const tenants: any = await query('SELECT id, store_name, email, status, trial_ends_at FROM tenants WHERE id = ?', [tenantId]);
         const tenant = tenants[0];
 

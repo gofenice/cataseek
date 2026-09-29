@@ -68,6 +68,14 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Hosting plan not found' });
         const plan = plans[0];
 
+        // Buying the plan already running would charge a second full cycle
+        const current: any = await query(
+            `SELECT id FROM hosting_subscriptions
+             WHERE tenant_id = ? AND hosting_plan_id = ? AND status = 'active' AND cancel_at_period_end = 0 LIMIT 1`,
+            [tenantId, plan.id]
+        );
+        if (current.length > 0) return res.status(400).json({ error: 'You are already on this hosting plan' });
+
         const tenants: any = await query('SELECT id, store_name, email FROM tenants WHERE id = ?', [tenantId]);
         const tenant = tenants[0];
 

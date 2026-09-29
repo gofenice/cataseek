@@ -8,6 +8,8 @@ import api from '../services/api';
 const TrialBanner: React.FC = () => {
     const [info, setInfo] = useState<{ status: string; trial_ends_at: string | null; search_enabled?: boolean | number; email_verified?: boolean | number } | null>(null);
     const [pastDue, setPastDue] = useState(false);
+    // Subscription halted after failed retries (status past_due) — service is paused
+    const [paused, setPaused] = useState(false);
     // Plan the customer already picked, starting (first charge) when the trial ends
     const [scheduledPlan, setScheduledPlan] = useState<string | null>(null);
     const [resent, setResent] = useState(false);
@@ -22,12 +24,25 @@ const TrialBanner: React.FC = () => {
             .then(res => {
                 const sub = res.data.subscription;
                 setPastDue(sub?.gateway_status === 'pending');
+                setPaused(sub?.status === 'past_due');
                 setScheduledPlan(sub?.status === 'trialing' ? sub.plan_name : null);
             })
-            .catch(() => { setPastDue(false); setScheduledPlan(null); });
+            .catch(() => { setPastDue(false); setPaused(false); setScheduledPlan(null); });
     }, []);
 
-    const pastDueBanner = pastDue ? (
+    const pastDueBanner = paused ? (
+        <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, padding: '0.7rem 2rem',
+            background: 'rgba(239,68,68,0.08)', borderBottom: '1px solid rgba(239,68,68,0.25)',
+            fontSize: '0.875rem', color: '#b91c1c',
+        }}>
+            <AlertTriangle size={16} />
+            <span><strong>Subscription paused —</strong> we couldn't collect your payment after several attempts, so your service is paused. Choose a plan to restart it.</span>
+            <Link to="/billing" style={{ marginLeft: 'auto', flexShrink: 0, background: '#dc2626', color: '#fff', padding: '0.35rem 1rem', borderRadius: 999, fontWeight: 600, fontSize: '0.8rem' }}>
+                Restart Plan
+            </Link>
+        </div>
+    ) : pastDue ? (
         <div style={{
             display: 'flex', alignItems: 'center', gap: 10, padding: '0.7rem 2rem',
             background: 'rgba(245,158,11,0.1)', borderBottom: '1px solid rgba(245,158,11,0.3)',

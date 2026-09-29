@@ -36,7 +36,9 @@ router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
     await expireEndedSubscriptions(req.user.id);
 
     // A paid subscription wins; otherwise a plan scheduled to start when the
-    // free trial ends ('trialing') is reported so the dashboard can show it.
+    // free trial ends ('trialing'), otherwise one paused after failed payments
+    // ('past_due' — no access, shown so the merchant knows why and can
+    // resubscribe). Access checks elsewhere deliberately exclude past_due.
     const subscription: any = await query(
       `SELECT s.*, p.name as plan_name, p.price, p.billing_period,
               p.max_products, p.max_requests_per_month, p.features,
@@ -44,8 +46,8 @@ router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
        FROM subscriptions s
        JOIN plans p ON s.plan_id = p.id
        LEFT JOIN plans pp ON s.pending_plan_id = pp.id
-       WHERE s.tenant_id = ? AND s.status IN ('active', 'trialing')
-       ORDER BY s.status = 'active' DESC, s.current_period_end DESC, s.id DESC
+       WHERE s.tenant_id = ? AND s.status IN ('active', 'trialing', 'past_due')
+       ORDER BY FIELD(s.status, 'active', 'trialing', 'past_due'), s.current_period_end DESC, s.id DESC
        LIMIT 1`,
       [req.user.id]
     );

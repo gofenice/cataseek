@@ -265,7 +265,7 @@ const AdminPayments: React.FC = () => {
                 </p>
                 {settings?.key_source === 'env' && (
                     <p style={{ fontSize: '0.8rem', color: '#f59e0b', margin: 0 }}>
-                        Keys are currently supplied by the server environment (<code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code>) and override the values saved here.
+                        Keys and webhook secret are currently supplied by the server environment (<code>RAZORPAY_KEY_ID</code> / <code>RAZORPAY_KEY_SECRET</code> / <code>RAZORPAY_WEBHOOK_SECRET</code>) and override the values saved here.
                     </p>
                 )}
 

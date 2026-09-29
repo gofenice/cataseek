@@ -241,6 +241,30 @@ router.delete('/tenants/:id', async (req: AuthRequest, res: Response) => {
 
             const indexName: string | null = tenantRows[0].meilisearch_index_name;
 
+            // 1b. Stop every live gateway subscription first (paid, trial-scheduled or
+            //     paused) — otherwise Razorpay keeps charging a deleted customer.
+            try {
+                await ensureHostingTables();
+                const liveSubs: any = await query(
+                    `SELECT razorpay_subscription_id FROM subscriptions WHERE tenant_id = ? AND status IN ('active','trialing','past_due') AND razorpay_subscription_id IS NOT NULL
+                     UNION
+                     SELECT razorpay_subscription_id FROM hosting_subscriptions WHERE tenant_id = ? AND status IN ('active','trialing','past_due') AND razorpay_subscription_id IS NOT NULL`,
+                    [id, id]
+                );
+                if (liveSubs.length > 0) {
+                    const { client } = await getRazorpayClient();
+                    for (const s of liveSubs) {
+                        try {
+                            await client.subscriptions.cancel(s.razorpay_subscription_id, false);
+                        } catch (e: any) {
+                            console.warn(`[Delete Tenant] gateway cancel ${s.razorpay_subscription_id}:`, e?.error?.description || e?.message);
+                        }
+                    }
+                }
+            } catch (e: any) {
+                console.warn('[Delete Tenant] could not cancel gateway subscriptions:', e?.message);
+            }
+
             // 2. Drop the tenant's dedicated products table (won't error if it doesn't exist)
             try {
                 await query(`DROP TABLE IF EXISTS products_${id}`);
