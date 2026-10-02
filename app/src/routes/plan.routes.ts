@@ -1,23 +1,32 @@
 import express from 'express';
 import { query } from '../config/database';
 import { authenticateJWT, AuthRequest } from '../middleware/auth';
-import { getRazorpayConfig } from '../services/payment-settings.service';
 import { ensurePaymentTables } from '../services/razorpay.service';
+import { verifyToken } from '../utils/auth';
+import { localizePlans, resolveTenantCurrency, resolveVisitorCurrency, subscriptionPriceJoin } from '../services/currency.service';
 import { applyDuePlanChange } from './billing.routes';
 import { expireEndedSubscriptions } from '../services/subscription-lifecycle.service';
 
 const router = express.Router();
 
-// Get all available plans (public — also consumed by the marketing site's pricing section)
+// Get all available plans (public — also consumed by the marketing site's pricing section).
+// Prices are in the caller's billing currency: a signed-in tenant's own currency,
+// otherwise the one for the visitor's country (or ?currency=XXX).
 router.get('/plans', async (req, res) => {
   try {
     await ensurePaymentTables();
-    const plans: any = await query(
+    const rows: any = await query(
       'SELECT id, name, description, price, billing_period, max_products, max_requests_per_month, features, parent_plan_id, yearly_discount_percent FROM plans WHERE is_active = TRUE ORDER BY price ASC'
     );
 
-    let currency = 'USD';
-    try { currency = (await getRazorpayConfig()).currency; } catch (_) { /* default */ }
+    const authHeader = req.headers.authorization;
+    const decoded: any = authHeader?.startsWith('Bearer ') ? verifyToken(authHeader.substring(7)) : null;
+    const currency = decoded?.tenantId
+      ? (await resolveTenantCurrency(Number(decoded.tenantId), req)).currency
+      : await resolveVisitorCurrency(req, req.query.currency as string);
+
+    const plans = (await localizePlans('plans', rows, currency))
+      .sort((a, b) => Number(a.price) - Number(b.price));
 
     res.json({ plans, currency });
   } catch (error) {
@@ -31,6 +40,7 @@ router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
   try {
     // Demo-mode subscriptions have no gateway to fire a renewal webhook — apply
     // any scheduled downgrade whose current_period_end has already passed.
+    await ensurePaymentTables();
     await applyDuePlanChange(req.user.id);
     // End subscriptions whose cancelled period is over before reporting state
     await expireEndedSubscriptions(req.user.id);
@@ -40,12 +50,14 @@ router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
     // ('past_due' — no access, shown so the merchant knows why and can
     // resubscribe). Access checks elsewhere deliberately exclude past_due.
     const subscription: any = await query(
-      `SELECT s.*, p.name as plan_name, p.price, p.billing_period,
+      `SELECT s.*, p.name as plan_name, COALESCE(cp.price, p.price) AS price, p.billing_period,
               p.max_products, p.max_requests_per_month, p.features,
-              pp.name AS pending_plan_name, pp.price AS pending_plan_price, pp.billing_period AS pending_plan_billing_period
+              pp.name AS pending_plan_name, COALESCE(cpp.price, pp.price) AS pending_plan_price, pp.billing_period AS pending_plan_billing_period
        FROM subscriptions s
        JOIN plans p ON s.plan_id = p.id
+       ${subscriptionPriceJoin('plans', 'p', 's', 'cp')}
        LEFT JOIN plans pp ON s.pending_plan_id = pp.id
+       ${subscriptionPriceJoin('plans', 'pp', 's', 'cpp')}
        WHERE s.tenant_id = ? AND s.status IN ('active', 'trialing', 'past_due')
        ORDER BY FIELD(s.status, 'active', 'trialing', 'past_due'), s.current_period_end DESC, s.id DESC
        LIMIT 1`,

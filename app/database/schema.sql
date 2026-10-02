@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS tenants (
     meilisearch_index_name VARCHAR(100) UNIQUE,
     status ENUM('active', 'suspended', 'trial', 'cancelled') DEFAULT 'trial',
     trial_ends_at DATETIME,
+    -- Billing currency picked with the currency switcher (NULL = follow country_code)
+    billing_currency VARCHAR(3) NULL,
+    country_code VARCHAR(2) NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_email (email),
@@ -53,6 +56,8 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     checkout_type VARCHAR(20) NULL,
     starts_at DATETIME NULL,
     cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Currency this subscription is billed in (NULL = base currency)
+    currency VARCHAR(3) NULL,
     pending_plan_id INT NULL,
     pending_plan_change_at DATETIME NULL,
     current_period_start DATETIME,
@@ -89,16 +94,30 @@ INSERT INTO plans (name, description, price, billing_period, max_products, max_r
 ('Professional', 'For growing businesses', 49.99, 'monthly', 10000, 100000, '["Advanced search", "Multi-language", "5 stores", "Priority support"]', 16.65),
 ('Enterprise', 'For large enterprises', 199.99, 'monthly', 100000, 1000000, '["Custom search", "Unlimited stores", "Multi-language", "Multi-store", "24/7 support", "Dedicated account manager"]', 16.66);
 
--- Razorpay plan mapping per gateway mode (test/live) — see razorpay.service.ts
+-- Price of a plan in currencies other than the base currency (plans.price /
+-- hosting_plans.price hold the base currency price) — see currency.service.ts
+CREATE TABLE IF NOT EXISTS plan_prices (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    plan_table    ENUM('plans','hosting_plans') NOT NULL,
+    local_plan_id INT NOT NULL,
+    currency      VARCHAR(3) NOT NULL,
+    price         DECIMAL(10,2) NOT NULL,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_plan_currency (plan_table, local_plan_id, currency)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Razorpay plan mapping per gateway mode (test/live) and currency — see razorpay.service.ts
 CREATE TABLE IF NOT EXISTS razorpay_plan_mappings (
     id               INT AUTO_INCREMENT PRIMARY KEY,
     mode             ENUM('test','live') NOT NULL,
     plan_table       ENUM('plans','hosting_plans') NOT NULL,
     local_plan_id    INT NOT NULL,
+    currency         VARCHAR(3) NOT NULL DEFAULT 'USD',
     razorpay_plan_id VARCHAR(64) NOT NULL,
     created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_local (mode, plan_table, local_plan_id),
+    UNIQUE KEY uq_local (mode, plan_table, local_plan_id, currency),
     UNIQUE KEY uq_rzp (mode, razorpay_plan_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

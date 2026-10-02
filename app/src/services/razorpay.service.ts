@@ -3,8 +3,9 @@ import crypto from 'crypto';
 import { query } from '../config/database';
 import { getRazorpayConfig, RazorpayConfig } from './payment-settings.service';
 import { backfillYearlyVariants } from './plan-sync.service';
+import { ensureCurrencyTables, localizePlan, PlanTable } from './currency.service';
 
-export type PlanTable = 'plans' | 'hosting_plans';
+export type { PlanTable };
 export type GatewayMode = 'test' | 'live';
 
 // ─── Razorpay client (credentials come from env or admin-configured DB settings) ─
@@ -36,6 +37,8 @@ export async function ensureSubscriptionLifecycleColumns(table: 'subscriptions' 
         `ALTER TABLE ${table} ADD COLUMN starts_at DATETIME NULL`,
         // Cancel requested: access continues until current_period_end, then ends
         `ALTER TABLE ${table} ADD COLUMN cancel_at_period_end BOOLEAN NOT NULL DEFAULT FALSE`,
+        // Currency this subscription is billed in (NULL = base currency, rows from before multi-currency)
+        `ALTER TABLE ${table} ADD COLUMN currency VARCHAR(3) NULL`,
     ];
     for (const sql of alters) {
         try { await query(sql); } catch (_) { /* exists */ }
@@ -100,22 +103,34 @@ async function runPaymentMigrations() {
     // One order row per gateway payment, even when /verify and the webhook race
     try { await query('ALTER TABLE orders ADD UNIQUE INDEX uq_rzp_payment (razorpay_payment_id)'); } catch (_) { /* exists or legacy duplicates */ }
 
-    // Cataseek plan → Razorpay plan, per gateway mode. Razorpay plans are created
-    // by hand in the Razorpay Dashboard (test and live keep separate plans) and
-    // mapped here; checkout never creates plans on its own.
+    // Cataseek plan → Razorpay plan, per gateway mode and currency. Razorpay plans
+    // (test and live keep separate plans, one per currency) are mapped here;
+    // checkout never creates plans on its own.
     await query(`
         CREATE TABLE IF NOT EXISTS razorpay_plan_mappings (
             id               INT AUTO_INCREMENT PRIMARY KEY,
             mode             ENUM('test','live') NOT NULL,
             plan_table       ENUM('plans','hosting_plans') NOT NULL,
             local_plan_id    INT NOT NULL,
+            currency         VARCHAR(3) NOT NULL DEFAULT 'USD',
             razorpay_plan_id VARCHAR(64) NOT NULL,
             created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uq_local (mode, plan_table, local_plan_id),
+            UNIQUE KEY uq_local (mode, plan_table, local_plan_id, currency),
             UNIQUE KEY uq_rzp (mode, razorpay_plan_id)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+    // Mappings from before multi-currency were all in the base currency
+    const hasCurrency: any = await query("SHOW COLUMNS FROM razorpay_plan_mappings LIKE 'currency'");
+    if (!hasCurrency || hasCurrency.length === 0) {
+        const base = (await getRazorpayConfig()).currency.toUpperCase();
+        await query("ALTER TABLE razorpay_plan_mappings ADD COLUMN currency VARCHAR(3) NOT NULL DEFAULT 'USD' AFTER local_plan_id");
+        await query('UPDATE razorpay_plan_mappings SET currency = ?', [base]);
+        await query('ALTER TABLE razorpay_plan_mappings DROP INDEX uq_local, ADD UNIQUE KEY uq_local (mode, plan_table, local_plan_id, currency)');
+    }
+
+    // Per-currency plan prices + the tenant's billing currency
+    await ensureCurrencyTables();
 
     // Webhook deliveries by x-razorpay-event-id (Razorpay delivers at-least-once)
     await query(`
@@ -208,44 +223,62 @@ export class PlanMappingError extends Error {}
 
 export const RAZORPAY_PLAN_ID_PATTERN = /^plan_[A-Za-z0-9]{14}$/;
 
-export async function getMappedRazorpayPlanId(mode: GatewayMode, table: PlanTable, localPlanId: number): Promise<string | null> {
+export async function getMappedRazorpayPlanId(mode: GatewayMode, table: PlanTable, localPlanId: number, currency: string): Promise<string | null> {
     await ensurePaymentTables();
     const rows: any = await query(
-        'SELECT razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ? AND plan_table = ? AND local_plan_id = ?',
-        [mode, table, localPlanId]
+        'SELECT razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ? AND plan_table = ? AND local_plan_id = ? AND currency = ?',
+        [mode, table, localPlanId, currency]
     );
     return rows?.[0]?.razorpay_plan_id || null;
 }
 
-export async function setPlanMapping(mode: GatewayMode, table: PlanTable, localPlanId: number, razorpayPlanId: string | null) {
+export async function setPlanMapping(mode: GatewayMode, table: PlanTable, localPlanId: number, currency: string, razorpayPlanId: string | null) {
     await ensurePaymentTables();
     if (!razorpayPlanId) {
-        await query('DELETE FROM razorpay_plan_mappings WHERE mode = ? AND plan_table = ? AND local_plan_id = ?', [mode, table, localPlanId]);
+        await query(
+            'DELETE FROM razorpay_plan_mappings WHERE mode = ? AND plan_table = ? AND local_plan_id = ? AND currency = ?',
+            [mode, table, localPlanId, currency]
+        );
+        validatedPlans.clear();
         return;
     }
     if (!RAZORPAY_PLAN_ID_PATTERN.test(razorpayPlanId)) {
         throw new PlanMappingError(`"${razorpayPlanId}" is not a valid Razorpay plan id (expected plan_ + 14 characters)`);
     }
+    // A Razorpay plan has one price and currency, so it belongs to exactly one
+    // Cataseek plan + currency (the upsert below would silently do nothing otherwise)
+    const taken: any = await query(
+        `SELECT plan_table, local_plan_id, currency FROM razorpay_plan_mappings
+         WHERE mode = ? AND razorpay_plan_id = ? AND NOT (plan_table = ? AND local_plan_id = ? AND currency = ?)`,
+        [mode, razorpayPlanId, table, localPlanId, currency]
+    );
+    if (taken.length > 0) {
+        throw new PlanMappingError(`${razorpayPlanId} is already mapped to ${taken[0].plan_table} #${taken[0].local_plan_id} (${taken[0].currency})`);
+    }
     await query(
-        `INSERT INTO razorpay_plan_mappings (mode, plan_table, local_plan_id, razorpay_plan_id) VALUES (?, ?, ?, ?)
+        `INSERT INTO razorpay_plan_mappings (mode, plan_table, local_plan_id, currency, razorpay_plan_id) VALUES (?, ?, ?, ?, ?)
          ON DUPLICATE KEY UPDATE razorpay_plan_id = VALUES(razorpay_plan_id), updated_at = NOW()`,
-        [mode, table, localPlanId, razorpayPlanId]
+        [mode, table, localPlanId, currency, razorpayPlanId]
     );
     validatedPlans.clear();
 }
 
 // Reverse lookup used by verify + webhooks: the Razorpay subscription's plan_id
-// is the source of truth for which Cataseek plan was actually bought.
+// is the source of truth for which Cataseek plan was bought and in which
+// currency. Returns the plan priced in that currency (with a `currency` field).
 export async function findLocalPlanByRazorpayPlanId(mode: GatewayMode, table: PlanTable, razorpayPlanId: string): Promise<any | null> {
     await ensurePaymentTables();
     if (!razorpayPlanId) return null;
     const rows: any = await query(
-        `SELECT p.* FROM razorpay_plan_mappings m
+        `SELECT p.*, m.currency AS mapped_currency FROM razorpay_plan_mappings m
          JOIN ${table} p ON p.id = m.local_plan_id
          WHERE m.mode = ? AND m.plan_table = ? AND m.razorpay_plan_id = ?`,
         [mode, table, razorpayPlanId]
     );
-    return rows?.[0] || null;
+    if (!rows?.[0]) return null;
+    const { mapped_currency, ...plan } = rows[0];
+    // A price removed after the sale must not break renewals of that subscription
+    return (await localizePlan(table, plan, mapped_currency)) || { ...plan, currency: mapped_currency };
 }
 
 // Compares a Razorpay plan entity with the Cataseek plan it is mapped to.
@@ -269,15 +302,17 @@ const validatedPlans = new Map<string, number>();
 const PLAN_VALIDATION_TTL_MS = 10 * 60 * 1000;
 
 // Returns the Razorpay plan id to subscribe to, after checking the Razorpay plan
-// still charges exactly the Cataseek price. Never creates plans.
+// still charges exactly the Cataseek price. `plan` is priced in the currency
+// being sold (see localizePlan). Never creates plans.
 export async function resolveRazorpayPlanForCheckout(plan: any, table: PlanTable = 'plans'): Promise<string> {
     const { client, config } = await getRazorpayClient();
-    const rzpPlanId = await getMappedRazorpayPlanId(config.mode, table, plan.id);
+    const currency = String(plan.currency || config.currency).toUpperCase();
+    const rzpPlanId = await getMappedRazorpayPlanId(config.mode, table, plan.id, currency);
     if (!rzpPlanId) {
-        throw new PlanMappingError(`No Razorpay ${config.mode} plan is mapped to ${table} #${plan.id} (${plan.name} ${plan.billing_period})`);
+        throw new PlanMappingError(`No Razorpay ${config.mode} ${currency} plan is mapped to ${table} #${plan.id} (${plan.name} ${plan.billing_period})`);
     }
 
-    const cacheKey = `${config.mode}|${table}|${plan.id}|${rzpPlanId}|${plan.price}|${plan.billing_period}|${config.currency}`;
+    const cacheKey = `${config.mode}|${table}|${plan.id}|${rzpPlanId}|${plan.price}|${plan.billing_period}|${currency}`;
     const validUntil = validatedPlans.get(cacheKey);
     if (validUntil && validUntil > Date.now()) return rzpPlanId;
 
@@ -287,7 +322,7 @@ export async function resolveRazorpayPlanForCheckout(plan: any, table: PlanTable
     } catch (e: any) {
         throw new PlanMappingError(`Razorpay plan ${rzpPlanId} could not be fetched: ${e?.error?.description || e?.message}`);
     }
-    const problems = comparePlan(rzpPlan, plan, config.currency);
+    const problems = comparePlan(rzpPlan, plan, currency);
     if (problems.length > 0) {
         throw new PlanMappingError(`Razorpay plan ${rzpPlanId} does not match ${table} #${plan.id}: ${problems.join('; ')}`);
     }
@@ -295,26 +330,28 @@ export async function resolveRazorpayPlanForCheckout(plan: any, table: PlanTable
     return rzpPlanId;
 }
 
-// Explicit admin action (never called from checkout): create a Razorpay plan for
-// an unmapped Cataseek plan in the current mode and map it.
+// Explicit admin action (never called from checkout): create a Razorpay plan in
+// the current mode for a Cataseek plan priced in `plan.currency`, and map it.
 export async function createAndMapRazorpayPlan(plan: any, table: PlanTable): Promise<string> {
     const { client, config } = await getRazorpayClient();
-    const existing = await getMappedRazorpayPlanId(config.mode, table, plan.id);
-    if (existing) throw new PlanMappingError(`${table} #${plan.id} is already mapped to ${existing} in ${config.mode} mode`);
+    const currency = String(plan.currency || config.currency).toUpperCase();
+    const existing = await getMappedRazorpayPlanId(config.mode, table, plan.id, currency);
+    if (existing) throw new PlanMappingError(`${table} #${plan.id} is already mapped to ${existing} for ${currency} in ${config.mode} mode`);
 
-    const namePrefix = table === 'hosting_plans' ? 'Hosting — ' : '';
+    const period = plan.billing_period === 'yearly' ? 'yearly' : 'monthly';
+    const product = table === 'hosting_plans' ? 'Hosting' : 'Search';
     const rzpPlan: any = await client.plans.create({
-        period: plan.billing_period === 'yearly' ? 'yearly' : 'monthly',
+        period,
         interval: 1,
         item: {
-            name: `${namePrefix}${plan.name} Plan (${plan.billing_period})`,
+            name: `Cataseek ${product} ${plan.name} ${period === 'yearly' ? 'Yearly' : 'Monthly'} ${currency}`,
             description: (plan.description || '').slice(0, 250) || undefined,
             amount: Math.round(Number(plan.price) * 100), // smallest currency unit
-            currency: config.currency,
+            currency,
         },
         notes: { local_plan_id: String(plan.id), local_table: table },
     });
-    await setPlanMapping(config.mode, table, plan.id, rzpPlan.id);
+    await setPlanMapping(config.mode, table, plan.id, currency, rzpPlan.id);
     return rzpPlan.id;
 }
 
@@ -357,7 +394,7 @@ export async function createRazorpaySubscription(
             item: {
                 name: opts.upfront.label.slice(0, 250),
                 amount: Math.round(opts.upfront.amount * 100),
-                currency: config.currency,
+                currency: String(plan.currency || config.currency).toUpperCase(),
             },
         }];
     }

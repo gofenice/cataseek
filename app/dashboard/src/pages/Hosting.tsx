@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Server, HardDrive, MemoryStick, Wifi, CheckCircle, PartyPopper, AlertCircle } from 'lucide-react';
 import api from '../services/api';
+import { formatMoney } from '../services/money';
+import CurrencySwitcher from '../components/CurrencySwitcher';
 
 interface HostingPlan {
     id: number;
@@ -9,9 +11,7 @@ interface HostingPlan {
     storage_gb: number;
     ram_gb: number;
     bandwidth: string;
-    billing_period: 'monthly' | 'yearly';
-    parent_plan_id: number | null;
-    yearly_discount_percent: number;
+    billing_period: string;
 }
 
 interface HostingSubscription {
@@ -30,7 +30,9 @@ interface HostingSubscription {
 interface PaymentConfig {
     gateway: 'razorpay' | 'demo';
     key_id: string | null;
-    currency: string;
+    currency: string; // this store's billing currency
+    currencyLocked?: boolean;
+    currencyOptions?: string[];
     mode: 'test' | 'live';
 }
 
@@ -42,9 +44,12 @@ interface Confirmation {
     periodEnd: string;
 }
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-    INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', SGD: 'S$',
-};
+// Razorpay charges Indian cards only in INR and cards from other countries only
+// in the other currencies — the usual reason for "Currency is not supported".
+const withCurrencyHint = (msg: string, options?: string[]) =>
+    /currency.*not supported/i.test(msg) && (options?.length || 0) > 1
+        ? `${msg} — your card may be issued in another country: change the Currency at the top of this page and try again.`
+        : msg;
 
 let razorpayScriptPromise: Promise<void> | null = null;
 const loadRazorpayScript = (): Promise<void> => {
@@ -74,10 +79,9 @@ const Hosting: React.FC = () => {
     const [cancelling, setCancelling] = useState(false);
     const [message, setMessage] = useState('');
     const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
-    const [billingPeriod, setBillingPeriod] = useState<'monthly' | 'yearly'>('monthly');
 
-    const fetchData = useCallback(async () => {
-        setLoading(true);
+    const fetchData = useCallback(async (showLoading = true) => {
+        if (showLoading) setLoading(true);
         try {
             const [hostRes, cfgRes] = await Promise.all([
                 api.get('/hosting/plans'),
@@ -93,7 +97,8 @@ const Hosting: React.FC = () => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const currencySymbol = CURRENCY_SYMBOLS[payConfig?.currency || 'USD'] || '$';
+    const currency = payConfig?.currency || 'USD';
+    const money = (amount: number | string | null | undefined) => formatMoney(amount, currency);
 
     const handleRazorpayCheckout = async (planId: number) => {
         const res = await api.post('/hosting/razorpay/subscribe', { planId });
@@ -155,7 +160,7 @@ const Hosting: React.FC = () => {
             await fetchData();
         } catch (e: any) {
             const msg = e.response?.data?.error || e.message || 'Failed to purchase';
-            if (msg !== 'Checkout cancelled') setMessage(`❌ ${msg}`);
+            if (msg !== 'Checkout cancelled') setMessage(`❌ ${withCurrencyHint(msg, payConfig?.currencyOptions)}`);
         }
         setSubscribing(null);
     };
@@ -214,16 +219,6 @@ const Hosting: React.FC = () => {
 
     const currentPlanId = subscription?.hosting_plan_id;
 
-    // Tiers are grouped by their monthly root; the toggle swaps in each
-    // tier's yearly sibling (linked via parent_plan_id) when selected.
-    const rootPlans = plans.filter(p => p.parent_plan_id === null);
-    const displayPlans = rootPlans.map(root =>
-        billingPeriod === 'yearly'
-            ? plans.find(p => p.parent_plan_id === root.id) || root
-            : root
-    );
-    const hasYearlyOption = rootPlans.some(root => plans.some(p => p.parent_plan_id === root.id));
-
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
             {/* Confirmation modal */}
@@ -246,7 +241,7 @@ const Hosting: React.FC = () => {
                         <div style={{ background: 'var(--bg-2)', borderRadius: 10, padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
                             {[
                                 ['Plan', `Hosting — ${confirmation.planName}`],
-                                ['Amount', `${currencySymbol}${confirmation.price} / ${confirmation.billingPeriod}`],
+                                ['Amount', `${money(confirmation.price)} / ${confirmation.billingPeriod}`],
                                 ['Invoice', confirmation.invoiceNumber],
                                 ['Next billing date', fmt(confirmation.periodEnd)],
                             ].map(([k, v]) => (
@@ -267,11 +262,20 @@ const Hosting: React.FC = () => {
             )}
 
             {/* Header */}
-            <div>
-                <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                    <Server size={26} color="var(--primary)" /> Hosting
-                </h1>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Managed hosting for your store — pick a plan and go live</p>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                    <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                        <Server size={26} color="var(--primary)" /> Hosting
+                    </h1>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Managed hosting for your store — pick a plan and go live</p>
+                </div>
+                <CurrencySwitcher
+                    currency={currency}
+                    options={payConfig?.currencyOptions || []}
+                    locked={!!payConfig?.currencyLocked}
+                    onChanged={() => fetchData(false)}
+                    onError={m => setMessage(`❌ ${m}`)}
+                />
             </div>
 
             {/* Flash message */}
@@ -336,42 +340,16 @@ const Hosting: React.FC = () => {
 
             {/* Plans */}
             <div>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-                    <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>
-                        {subscription ? 'Switch Plan' : 'Available Hosting Plans'}
-                    </h2>
-                    {hasYearlyOption && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'monthly' ? 700 : 500, color: billingPeriod === 'monthly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Monthly</span>
-                            <button
-                                onClick={() => setBillingPeriod(p => p === 'monthly' ? 'yearly' : 'monthly')}
-                                style={{
-                                    position: 'relative', width: 44, height: 24, borderRadius: 99, border: 'none', cursor: 'pointer',
-                                    background: billingPeriod === 'yearly' ? 'var(--primary)' : 'rgba(20,32,26,0.15)', transition: 'background 0.2s',
-                                }}
-                                aria-label="Toggle yearly billing"
-                            >
-                                <span style={{
-                                    position: 'absolute', top: 3, left: billingPeriod === 'yearly' ? 23 : 3,
-                                    width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
-                                }} />
-                            </button>
-                            <span style={{ fontSize: '0.85rem', fontWeight: billingPeriod === 'yearly' ? 700 : 500, color: billingPeriod === 'yearly' ? 'var(--text-main)' : 'var(--text-muted)' }}>Yearly</span>
-                            {billingPeriod === 'yearly' && rootPlans[0]?.yearly_discount_percent > 0 && (
-                                <span style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981', fontSize: '0.72rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: 99, border: '1px solid rgba(16,185,129,0.3)' }}>
-                                    Save up to {Math.max(...rootPlans.map(p => p.yearly_discount_percent || 0))}%
-                                </span>
-                            )}
-                        </div>
-                    )}
-                </div>
+                <h2 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)', margin: '0 0 1rem' }}>
+                    {subscription ? 'Switch Plan' : 'Available Hosting Plans'}
+                </h2>
                 {plans.length === 0 ? (
                     <div className="glass" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.9rem' }}>
                         No hosting plans available right now. Check back soon.
                     </div>
                 ) : (
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '1rem' }}>
-                        {displayPlans.map(plan => {
+                        {plans.map(plan => {
                             const isCurrent = plan.id === currentPlanId;
                             return (
                                 <div key={plan.id} className="glass" style={{
@@ -387,8 +365,8 @@ const Hosting: React.FC = () => {
                                         <span style={{ fontSize: '1.05rem', fontWeight: 700, color: 'var(--text-main)' }}>{plan.name}</span>
                                     </div>
                                     <div>
-                                        <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)' }}>{currencySymbol}{plan.price}</span>
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>/{plan.billing_period === 'yearly' ? 'year' : 'month'}</span>
+                                        <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)' }}>{money(plan.price)}</span>
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>/month</span>
                                     </div>
                                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1 }}>
                                         {[
@@ -428,7 +406,7 @@ const Hosting: React.FC = () => {
             <div style={{ background: 'rgba(5,150,105,0.06)', border: '1px solid rgba(5,150,105,0.2)', borderRadius: 10, padding: '1rem 1.25rem', fontSize: '0.85rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                 <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} color="var(--primary)" />
                 <span>
-                    Hosting renews automatically each billing period and is billed separately from your search plan.
+                    Hosting renews automatically every month and is billed separately from your search plan.
                     Invoices appear under <strong style={{ color: 'var(--text-main)' }}>Billing → Billing History</strong>.
                     {payConfig?.gateway !== 'razorpay' && ' Currently in demo mode — no real charges.'}
                 </span>

@@ -17,6 +17,13 @@ import {
 import { ensureHostingTables } from '../services/hosting.service';
 import { syncYearlyVariant } from '../services/plan-sync.service';
 import { getGoogleAuthConfig, saveGoogleAuthConfig } from '../services/google-auth-settings.service';
+import {
+    SUPPORTED_CURRENCIES,
+    getEnabledCurrencies,
+    localizePlan,
+    saveExtraCurrencies,
+    setPlanPrice,
+} from '../services/currency.service';
 
 const router = express.Router();
 
@@ -403,7 +410,7 @@ router.delete('/plans/:id', async (req: AuthRequest, res: Response) => {
 router.get('/hosting-plans', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
-        const plans: any = await query('SELECT * FROM hosting_plans ORDER BY price ASC');
+        const plans: any = await query("SELECT * FROM hosting_plans WHERE billing_period = 'monthly' ORDER BY price ASC");
 
         // Count of tenants with hosting enabled (for the page header)
         const [enabledCount]: any = await query(
@@ -426,26 +433,21 @@ router.get('/hosting-plans', async (req: AuthRequest, res: Response) => {
     }
 });
 
-// POST /api/admin/hosting-plans
-// Yearly billing: only monthly plans are directly created here. A yearly
-// sibling (parent_plan_id → this row) is auto-generated from
-// yearly_discount_percent — see syncYearlyVariant.
+// POST /api/admin/hosting-plans — hosting is sold monthly only
 router.post('/hosting-plans', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
-        const { name, price, storage_gb, ram_gb, bandwidth, yearly_discount_percent } = req.body;
+        const { name, price, storage_gb, ram_gb, bandwidth } = req.body;
 
         if (!name || price == null || storage_gb == null || ram_gb == null) {
             return res.status(400).json({ error: 'name, price, storage_gb, and ram_gb are required' });
         }
 
-        const discount = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
         const result: any = await query(
-            `INSERT INTO hosting_plans (name, price, storage_gb, ram_gb, bandwidth, billing_period, yearly_discount_percent, is_active)
-             VALUES (?, ?, ?, ?, ?, 'monthly', ?, TRUE)`,
-            [name, price, storage_gb, ram_gb, bandwidth || 'Unlimited', discount]
+            `INSERT INTO hosting_plans (name, price, storage_gb, ram_gb, bandwidth, billing_period, is_active)
+             VALUES (?, ?, ?, ?, ?, 'monthly', TRUE)`,
+            [name, price, storage_gb, ram_gb, bandwidth || 'Unlimited']
         );
-        await syncYearlyVariant('hosting_plans', result.insertId);
         res.status(201).json({ message: 'Hosting plan created', id: result.insertId });
     } catch (error) {
         console.error('Admin hosting plan create error:', error);
@@ -459,15 +461,12 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
         await ensureHostingTables();
         const { id } = req.params;
 
-        const existing: any = await query('SELECT parent_plan_id FROM hosting_plans WHERE id = ?', [id]);
+        const existing: any = await query("SELECT id FROM hosting_plans WHERE id = ? AND billing_period = 'monthly'", [id]);
         if (!existing || existing.length === 0) {
             return res.status(404).json({ error: 'Hosting plan not found' });
         }
-        if (existing[0].parent_plan_id !== null) {
-            return res.status(400).json({ error: 'Yearly plans are auto-generated — edit the monthly plan instead.' });
-        }
 
-        const { name, price, storage_gb, ram_gb, bandwidth, is_active, yearly_discount_percent } = req.body;
+        const { name, price, storage_gb, ram_gb, bandwidth, is_active } = req.body;
 
         const allowed: Record<string, any> = {};
         if (name !== undefined) allowed.name = name;
@@ -476,7 +475,6 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
         if (ram_gb !== undefined) allowed.ram_gb = ram_gb;
         if (bandwidth !== undefined) allowed.bandwidth = bandwidth;
         if (is_active !== undefined) allowed.is_active = is_active ? 1 : 0;
-        if (yearly_discount_percent !== undefined) allowed.yearly_discount_percent = Math.min(99, Math.max(0, Number(yearly_discount_percent) || 0));
 
         if (Object.keys(allowed).length === 0) {
             return res.status(400).json({ error: 'Nothing to update' });
@@ -484,7 +482,6 @@ router.patch('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
 
         const setClauses = Object.keys(allowed).map(k => `${k} = ?`).join(', ');
         await query(`UPDATE hosting_plans SET ${setClauses}, updated_at = NOW() WHERE id = ?`, [...Object.values(allowed), id]);
-        await syncYearlyVariant('hosting_plans', Number(id));
         res.json({ message: 'Hosting plan updated' });
     } catch (error) {
         console.error('Admin hosting plan update error:', error);
@@ -497,15 +494,11 @@ router.delete('/hosting-plans/:id', async (req: AuthRequest, res: Response) => {
     try {
         await ensureHostingTables();
         const { id } = req.params;
-        const existing: any = await query('SELECT parent_plan_id FROM hosting_plans WHERE id = ?', [id]);
+        const existing: any = await query("SELECT id FROM hosting_plans WHERE id = ? AND billing_period = 'monthly'", [id]);
         if (!existing || existing.length === 0) {
             return res.status(404).json({ error: 'Hosting plan not found' });
         }
-        if (existing[0].parent_plan_id !== null) {
-            return res.status(400).json({ error: 'Yearly plans are auto-generated — deactivate the monthly plan instead.' });
-        }
         await query('UPDATE hosting_plans SET is_active = FALSE WHERE id = ?', [id]);
-        await syncYearlyVariant('hosting_plans', Number(id)); // cascades is_active to the yearly sibling
         res.json({ message: 'Hosting plan deactivated' });
     } catch (error) {
         console.error('Admin hosting plan deactivate error:', error);
@@ -629,10 +622,25 @@ router.post('/payment-settings/test', async (req: AuthRequest, res: Response) =>
     }
 });
 
-// ─── Razorpay plan mapping ───────────────────────────────────────────────────
-// Each Cataseek plan (search + hosting) maps to a Razorpay plan per mode. Plans
-// are created in the Razorpay Dashboard; checkout never creates them.
+// ─── Razorpay plan mapping + currency prices ─────────────────────────────────
+// Each Cataseek plan (search + hosting) maps to one Razorpay plan per mode AND
+// currency. The base currency price is the plan's own price; other currencies
+// have a fixed price set here. Checkout never creates Razorpay plans.
 const PLAN_TABLES: PlanTable[] = ['plans', 'hosting_plans'];
+
+// Hosting is monthly only; yearly rows left from the old auto-generation are not sold
+const sellableFilter = (table: PlanTable) => (table === 'hosting_plans' ? "WHERE billing_period = 'monthly'" : '');
+
+async function loadSellablePlan(table: PlanTable, planId: any): Promise<any | null> {
+    const filter = sellableFilter(table);
+    const rows: any = await query(`SELECT * FROM ${table} ${filter ? `${filter} AND` : 'WHERE'} id = ?`, [planId]);
+    return rows?.[0] || null;
+}
+
+function parseCurrency(value: any, allowed: string[]): string | null {
+    const currency = String(value || '').toUpperCase();
+    return allowed.includes(currency) ? currency : null;
+}
 
 // GET /api/admin/razorpay/plan-mappings
 router.get('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) => {
@@ -640,37 +648,125 @@ router.get('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) =>
         await ensurePaymentTables();
         await ensureHostingTables();
         const config = await getRazorpayConfig(true);
-        const mappings: any = await query('SELECT mode, plan_table, local_plan_id, razorpay_plan_id FROM razorpay_plan_mappings');
+        const enabled = await getEnabledCurrencies(true);
+        const base = enabled[0];
+        const currencies = [base, ...SUPPORTED_CURRENCIES.filter((c) => c !== base)];
+
+        const mappings: any = await query('SELECT mode, plan_table, local_plan_id, currency, razorpay_plan_id FROM razorpay_plan_mappings');
+        const prices: any = await query('SELECT plan_table, local_plan_id, currency, price FROM plan_prices');
         const plans: any[] = [];
         for (const table of PLAN_TABLES) {
-            const rows: any = await query(`SELECT id, name, price, billing_period, is_active FROM ${table} ORDER BY billing_period, price`);
+            const rows: any = await query(`SELECT id, name, price, billing_period, is_active FROM ${table} ${sellableFilter(table)} ORDER BY billing_period, price`);
             for (const p of rows) {
-                const find = (mode: string) => mappings.find((m: any) => m.mode === mode && m.plan_table === table && Number(m.local_plan_id) === Number(p.id))?.razorpay_plan_id || null;
-                plans.push({ table, ...p, test_plan_id: find('test'), live_plan_id: find('live') });
+                const mine = (x: any) => x.plan_table === table && Number(x.local_plan_id) === Number(p.id);
+                const priceByCurrency: Record<string, string | null> = {};
+                const planIds: Record<string, Record<string, string | null>> = { test: {}, live: {} };
+                for (const currency of currencies) {
+                    priceByCurrency[currency] = currency === base
+                        ? p.price
+                        : prices.find((x: any) => mine(x) && x.currency === currency)?.price ?? null;
+                    for (const mode of ['test', 'live']) {
+                        planIds[mode][currency] = mappings.find((m: any) => mine(m) && m.mode === mode && m.currency === currency)?.razorpay_plan_id || null;
+                    }
+                }
+                plans.push({ table, ...p, prices: priceByCurrency, plan_ids: planIds });
             }
         }
-        res.json({ mode: config.mode, currency: config.currency, plans });
+        res.json({ mode: config.mode, currency: base, currencies, enabled_currencies: enabled, plans });
     } catch (error) {
         console.error('Plan mapping list error:', error);
         res.status(500).json({ error: 'Failed to fetch plan mappings' });
     }
 });
 
-// PUT /api/admin/razorpay/plan-mappings  { table, planId, mode, razorpayPlanId }  (empty id = unmap)
+// PUT /api/admin/razorpay/plan-mappings  { table, planId, mode, currency, razorpayPlanId }  (empty id = unmap)
 router.put('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) => {
     try {
         const { table, planId, mode, razorpayPlanId } = req.body;
         if (!PLAN_TABLES.includes(table)) return res.status(400).json({ error: 'table must be plans or hosting_plans' });
         if (!['test', 'live'].includes(mode)) return res.status(400).json({ error: "mode must be 'test' or 'live'" });
-        const rows: any = await query(`SELECT id FROM ${table} WHERE id = ?`, [planId]);
-        if (!rows || rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        await setPlanMapping(mode, table, Number(planId), String(razorpayPlanId || '').trim() || null);
+        const base = (await getEnabledCurrencies())[0];
+        const currency = parseCurrency(req.body.currency || base, [base, ...SUPPORTED_CURRENCIES]);
+        if (!currency) return res.status(400).json({ error: 'Unsupported currency' });
+        if (!(await loadSellablePlan(table, planId))) return res.status(404).json({ error: 'Plan not found' });
+        await setPlanMapping(mode, table, Number(planId), currency, String(razorpayPlanId || '').trim() || null);
         res.json({ message: 'Plan mapping saved' });
     } catch (error: any) {
         if (error instanceof PlanMappingError) return res.status(400).json({ error: error.message });
-        if (error?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'That Razorpay plan is already mapped to another Cataseek plan' });
+        if (error?.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'That Razorpay plan is already mapped to another Cataseek plan or currency' });
         console.error('Plan mapping save error:', error);
         res.status(500).json({ error: 'Failed to save plan mapping' });
+    }
+});
+
+// PUT /api/admin/razorpay/plan-prices  { table, planId, currency, price }  (empty price = remove)
+// Price of a plan in a non-base currency. The base currency price is the plan's own price.
+router.put('/razorpay/plan-prices', async (req: AuthRequest, res: Response) => {
+    try {
+        await ensurePaymentTables();
+        const { table, planId, price } = req.body;
+        if (!PLAN_TABLES.includes(table)) return res.status(400).json({ error: 'table must be plans or hosting_plans' });
+        const enabled = await getEnabledCurrencies(true);
+        const base = enabled[0];
+        const currency = parseCurrency(req.body.currency, SUPPORTED_CURRENCIES.filter((c) => c !== base));
+        if (!currency) return res.status(400).json({ error: `Set the ${base} price on the plan itself; other prices must be in ${SUPPORTED_CURRENCIES.filter((c) => c !== base).join(', ')}` });
+        if (!(await loadSellablePlan(table, planId))) return res.status(404).json({ error: 'Plan not found' });
+
+        const remove = price === null || price === undefined || String(price).trim() === '';
+        const amount = Number(price);
+        if (!remove && (!Number.isFinite(amount) || amount <= 0)) return res.status(400).json({ error: 'price must be a positive number' });
+        if (remove && enabled.includes(currency)) {
+            return res.status(400).json({ error: `${currency} is switched on for customers — switch it off before removing a ${currency} price` });
+        }
+        await setPlanPrice(table, Number(planId), currency, remove ? null : Math.round(amount * 100) / 100);
+        res.json({ message: 'Price saved' });
+    } catch (error) {
+        console.error('Plan price save error:', error);
+        res.status(500).json({ error: 'Failed to save price' });
+    }
+});
+
+// PUT /api/admin/billing-currencies  { currencies: ['INR','GBP'] }
+// Extra currencies offered to customers on top of the base currency. A currency
+// can only be switched on once every active plan has a price and a Razorpay
+// plan (current mode) in it — otherwise customers would see plans they can't buy.
+router.put('/billing-currencies', async (req: AuthRequest, res: Response) => {
+    try {
+        await ensurePaymentTables();
+        await ensureHostingTables();
+        const config = await getRazorpayConfig(true);
+        const base = (await getEnabledCurrencies(true))[0];
+        const wanted: string[] = Array.from(new Set((Array.isArray(req.body?.currencies) ? req.body.currencies : [])
+            .map((c: any) => String(c).toUpperCase())));
+        const invalid = wanted.filter((c) => !SUPPORTED_CURRENCIES.includes(c));
+        if (invalid.length > 0) return res.status(400).json({ error: `Unsupported currency: ${invalid.join(', ')}` });
+        const extras = wanted.filter((c) => c !== base);
+
+        const missing: string[] = [];
+        for (const currency of extras) {
+            for (const table of PLAN_TABLES) {
+                const filter = sellableFilter(table);
+                const plans: any = await query(`SELECT * FROM ${table} ${filter ? `${filter} AND` : 'WHERE'} is_active = TRUE`);
+                for (const p of plans) {
+                    const label = `${table === 'hosting_plans' ? 'Hosting ' : ''}${p.name} (${p.billing_period})`;
+                    if (!(await localizePlan(table, p, currency))) { missing.push(`${currency} price for ${label}`); continue; }
+                    const mapped: any = await query(
+                        'SELECT id FROM razorpay_plan_mappings WHERE mode = ? AND plan_table = ? AND local_plan_id = ? AND currency = ?',
+                        [config.mode, table, p.id, currency]
+                    );
+                    if (mapped.length === 0) missing.push(`${currency} Razorpay ${config.mode} plan for ${label}`);
+                }
+            }
+        }
+        if (missing.length > 0) {
+            return res.status(400).json({ error: `Cannot switch on yet — missing: ${missing.slice(0, 6).join('; ')}${missing.length > 6 ? ` and ${missing.length - 6} more` : ''}` });
+        }
+
+        await saveExtraCurrencies(extras);
+        res.json({ message: 'Currencies saved', enabled_currencies: [base, ...extras] });
+    } catch (error) {
+        console.error('Billing currencies save error:', error);
+        res.status(500).json({ error: 'Failed to save currencies' });
     }
 });
 
@@ -679,18 +775,21 @@ router.put('/razorpay/plan-mappings', async (req: AuthRequest, res: Response) =>
 router.post('/razorpay/plan-mappings/verify', async (req: AuthRequest, res: Response) => {
     try {
         const { client, config } = await getRazorpayClient();
-        const mappings: any = await query('SELECT plan_table, local_plan_id, razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ?', [config.mode]);
+        await ensurePaymentTables();
+        const mappings: any = await query('SELECT plan_table, local_plan_id, currency, razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ?', [config.mode]);
         const results: any[] = [];
         for (const m of mappings) {
             const rows: any = await query(`SELECT * FROM ${m.plan_table} WHERE id = ?`, [m.local_plan_id]);
-            const plan = rows?.[0];
-            if (!plan) { results.push({ ...m, ok: false, problems: ['Cataseek plan no longer exists'] }); continue; }
+            if (!rows?.[0]) { results.push({ ...m, ok: false, problems: ['Cataseek plan no longer exists'] }); continue; }
+            const plan = await localizePlan(m.plan_table, rows[0], m.currency);
+            const info = { ...m, name: rows[0].name, billing_period: rows[0].billing_period };
+            if (!plan) { results.push({ ...info, ok: false, problems: [`No ${m.currency} price is set for this plan`] }); continue; }
             try {
                 const rzpPlan: any = await client.plans.fetch(m.razorpay_plan_id);
-                const problems = comparePlan(rzpPlan, plan, config.currency);
-                results.push({ ...m, name: plan.name, billing_period: plan.billing_period, razorpay_name: rzpPlan?.item?.name, ok: problems.length === 0, problems });
+                const problems = comparePlan(rzpPlan, plan, m.currency);
+                results.push({ ...info, razorpay_name: rzpPlan?.item?.name, ok: problems.length === 0, problems });
             } catch (e: any) {
-                results.push({ ...m, name: plan.name, billing_period: plan.billing_period, ok: false, problems: [e?.error?.description || e?.message || 'Fetch failed'] });
+                results.push({ ...info, ok: false, problems: [e?.error?.description || e?.message || 'Fetch failed'] });
             }
         }
         res.json({ mode: config.mode, results });
@@ -699,15 +798,22 @@ router.post('/razorpay/plan-mappings/verify', async (req: AuthRequest, res: Resp
     }
 });
 
-// POST /api/admin/razorpay/plan-mappings/create  { table, planId } — explicit,
-// admin-triggered creation of a Razorpay plan for an unmapped Cataseek plan.
+// POST /api/admin/razorpay/plan-mappings/create  { table, planId, currency } — explicit,
+// admin-triggered creation of a Razorpay plan (current mode) for an unmapped
+// Cataseek plan + currency.
 router.post('/razorpay/plan-mappings/create', async (req: AuthRequest, res: Response) => {
     try {
         const { table, planId } = req.body;
         if (!PLAN_TABLES.includes(table)) return res.status(400).json({ error: 'table must be plans or hosting_plans' });
-        const rows: any = await query(`SELECT * FROM ${table} WHERE id = ?`, [planId]);
-        if (!rows || rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        const id = await createAndMapRazorpayPlan(rows[0], table);
+        await ensurePaymentTables();
+        const base = (await getEnabledCurrencies())[0];
+        const currency = parseCurrency(req.body.currency || base, [base, ...SUPPORTED_CURRENCIES]);
+        if (!currency) return res.status(400).json({ error: 'Unsupported currency' });
+        const row = await loadSellablePlan(table, planId);
+        if (!row) return res.status(404).json({ error: 'Plan not found' });
+        const plan = await localizePlan(table, row, currency);
+        if (!plan) return res.status(400).json({ error: `Set the ${currency} price for this plan first` });
+        const id = await createAndMapRazorpayPlan(plan, table);
         res.json({ message: `Created and mapped Razorpay plan ${id}`, razorpay_plan_id: id });
     } catch (error: any) {
         if (error instanceof PlanMappingError) return res.status(400).json({ error: error.message });
@@ -763,9 +869,18 @@ router.get('/orders', async (req: AuthRequest, res: Response) => {
             FROM orders
         `);
 
+        // Money is never added up across currencies
+        const revenue: any = await query(`
+            SELECT currency,
+                SUM(amount) AS total_revenue,
+                SUM(CASE WHEN created_at >= DATE_FORMAT(NOW(), '%Y-%m-01') THEN amount ELSE 0 END) AS revenue_this_month
+            FROM orders WHERE status = 'captured'
+            GROUP BY currency ORDER BY currency
+        `);
+
         res.json({
             orders,
-            summary: summary[0] ?? summary,
+            summary: { ...(summary[0] ?? summary), revenue_by_currency: revenue },
             pagination: {
                 total: countResult[0].total,
                 page,

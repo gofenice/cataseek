@@ -3,14 +3,13 @@ import { generateInvoicePDF } from './pdf.service';
 import { sendInvoiceEmail } from './mailer.service';
 import { getRazorpayClient, ensureSubscriptionLifecycleColumns } from './razorpay.service';
 import { getCompanyConfig } from './payment-settings.service';
-import { backfillYearlyVariants } from './plan-sync.service';
 
 // ─── Hosting product ──────────────────────────────────────────────────────────
 // Second product line: on-demand hosting. Plans are admin-managed and the
 // service is enabled per tenant (tenants.hosting_enabled). Billing reuses the
 // same Razorpay/demo gateway as search subscriptions.
 
-// Memoised: concurrent first callers share one run (backfillYearlyVariants must not race)
+// Memoised: concurrent first callers share one run
 let migration: Promise<void> | null = null;
 export function ensureHostingTables(): Promise<void> {
     if (!migration) {
@@ -69,11 +68,11 @@ async function runHostingMigrations() {
     // Distinguish products in the shared orders table
     try { await query("ALTER TABLE orders ADD COLUMN product VARCHAR(20) NOT NULL DEFAULT 'search'"); } catch (_) { /* exists */ }
 
-    // Yearly billing: monthly rows are the source of truth, yearly siblings
-    // (linked via parent_plan_id) are auto-generated — see plan-sync.service.
+    // Hosting is sold monthly only. These columns remain from when yearly
+    // siblings were auto-generated (as search plans still are); yearly rows
+    // still in the table are never listed or sold.
     try { await query("ALTER TABLE hosting_plans ADD COLUMN yearly_discount_percent DECIMAL(5,2) NOT NULL DEFAULT 0"); } catch (_) { /* exists */ }
     try { await query("ALTER TABLE hosting_plans ADD COLUMN parent_plan_id INT NULL"); } catch (_) { /* exists */ }
-    await backfillYearlyVariants('hosting_plans');
 }
 
 function makeInvoiceNumber(id: number): string {
@@ -91,7 +90,7 @@ export async function activateHostingSubscription(opts: {
     razorpaySubscriptionId?: string | null;
 }) {
     const { tenantId, plan } = opts;
-    const currency = opts.currency || 'USD';
+    const currency = opts.currency || plan.currency || 'USD';
     const billingReason = opts.billingReason || 'hosting_create';
 
     await ensureHostingTables();
@@ -132,9 +131,9 @@ export async function activateHostingSubscription(opts: {
     }
 
     await query(
-        `INSERT INTO hosting_subscriptions (tenant_id, hosting_plan_id, status, current_period_start, current_period_end, razorpay_subscription_id)
-         VALUES (?, ?, 'active', ?, ?, ?)`,
-        [tenantId, plan.id, periodStart, periodEnd, opts.razorpaySubscriptionId || null]
+        `INSERT INTO hosting_subscriptions (tenant_id, hosting_plan_id, status, current_period_start, current_period_end, razorpay_subscription_id, currency)
+         VALUES (?, ?, 'active', ?, ?, ?, ?)`,
+        [tenantId, plan.id, periodStart, periodEnd, opts.razorpaySubscriptionId || null, currency]
     );
 
     // Invoice (shared invoices table, prefixed plan name)
@@ -171,7 +170,7 @@ export async function activateHostingSubscription(opts: {
         }],
     })
         .then((pdfBuffer) =>
-            sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, invoicePlanName, parseFloat(plan.price), pdfBuffer)
+            sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, invoicePlanName, parseFloat(plan.price), pdfBuffer, currency)
         )
         .catch((e) => console.error('Hosting invoice email error:', e));
 

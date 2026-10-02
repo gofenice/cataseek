@@ -8,10 +8,7 @@ interface HostingPlan {
     storage_gb: number;
     ram_gb: number;
     bandwidth: string;
-    billing_period: 'monthly' | 'yearly';
     is_active: boolean;
-    parent_plan_id: number | null;
-    yearly_discount_percent: number;
 }
 
 interface Stats {
@@ -21,7 +18,6 @@ interface Stats {
 
 const emptyForm = {
     name: '', price: '', storage_gb: '', ram_gb: '', bandwidth: 'Unlimited', is_active: true,
-    yearly_discount_percent: '15',
 };
 
 const AdminHosting: React.FC = () => {
@@ -59,7 +55,6 @@ const AdminHosting: React.FC = () => {
             storage_gb: String(p.storage_gb), ram_gb: String(p.ram_gb),
             bandwidth: p.bandwidth,
             is_active: p.is_active,
-            yearly_discount_percent: String(p.yearly_discount_percent ?? 0),
         });
         setEditingId(p.id);
         setMsg('');
@@ -76,7 +71,6 @@ const AdminHosting: React.FC = () => {
                 ram_gb: parseFloat(form.ram_gb) || 0,
                 bandwidth: form.bandwidth || 'Unlimited',
                 is_active: form.is_active,
-                yearly_discount_percent: Math.min(99, Math.max(0, parseFloat(form.yearly_discount_percent) || 0)),
             };
             if (editingId) {
                 await api.patch(`/admin/hosting-plans/${editingId}`, payload);
@@ -142,29 +136,17 @@ const AdminHosting: React.FC = () => {
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border)' }}>
-                                {['Name', 'Monthly', 'Yearly', 'Size', 'RAM', 'Data', 'Status', ''].map(h => (
+                                {['Name', 'Monthly', 'Size', 'RAM', 'Data', 'Status', ''].map(h => (
                                     <th key={h} style={{ padding: '0.85rem 1rem', textAlign: 'left', fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                                 ))}
                             </tr>
                         </thead>
                         <tbody>
-                            {plans.filter(p => p.parent_plan_id === null).map(plan => {
-                                const yearly = plans.find(p => p.parent_plan_id === plan.id);
+                            {plans.map(plan => {
                                 return (
                                 <tr key={plan.id} style={{ borderBottom: '1px solid rgba(20,32,26,0.06)' }}>
                                     <td style={{ padding: '0.85rem 1rem', fontWeight: 600, color: 'var(--text-main)' }}>{plan.name}</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>{Number(plan.price).toFixed(2)}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/mo</span></td>
-                                    <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>
-                                        {yearly ? (
-                                            <>{Number(yearly.price).toFixed(2)}<span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.8rem' }}>/yr</span>{' '}
-                                                {plan.yearly_discount_percent > 0 && (
-                                                    <span style={{ background: 'rgba(16,185,129,0.1)', color: '#99c124', padding: '0.1rem 0.5rem', borderRadius: 20, fontSize: '0.72rem', fontWeight: 700 }}>
-                                                        {plan.yearly_discount_percent}% off
-                                                    </span>
-                                                )}
-                                            </>
-                                        ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
-                                    </td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.storage_gb} GB</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{Number(plan.ram_gb)} GB</td>
                                     <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)' }}>{plan.bandwidth}</td>
@@ -193,7 +175,7 @@ const AdminHosting: React.FC = () => {
             <div className="glass" style={{ padding: '1.25rem 1.5rem', maxWidth: 720 }}>
                 <h3 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: 10 }}>How the hosting product works</h3>
                 <ol style={{ margin: 0, paddingLeft: '1.2rem', color: 'var(--text-muted)', fontSize: '0.83rem', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <li>Create hosting plans here (Amount, Size, RAM, Data).</li>
+                    <li>Create hosting plans here (Amount, Size, RAM, Data). Hosting is billed monthly; prices in other currencies are set under <strong style={{ color: 'var(--text-main)' }}>Payments → Plan Mapping</strong>.</li>
                     <li>Open <strong style={{ color: 'var(--text-main)' }}>Tenants → a store → Edit Tenant</strong> and switch <strong style={{ color: 'var(--text-main)' }}>Hosting Service</strong> to Enabled.</li>
                     <li>That store now sees a <strong style={{ color: 'var(--text-main)' }}>Hosting</strong> section in their dashboard and can purchase a plan.</li>
                     <li>Payments use the same gateway as search plans (Razorpay or demo mode) and appear under <strong style={{ color: 'var(--text-main)' }}>Orders</strong>.</li>
@@ -226,12 +208,6 @@ const AdminHosting: React.FC = () => {
                                     style={inputStyle} />
                             </div>
                             <div>
-                                <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Yearly Discount %</label>
-                                <input type="number" min={0} max={99} placeholder="15" value={form.yearly_discount_percent}
-                                    onChange={e => setForm(prev => ({ ...prev, yearly_discount_percent: e.target.value }))}
-                                    style={inputStyle} />
-                            </div>
-                            <div>
                                 <label style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', display: 'block', marginBottom: 4 }}>Size (GB storage)</label>
                                 <input type="number" placeholder="50" value={form.storage_gb}
                                     onChange={e => setForm(prev => ({ ...prev, storage_gb: e.target.value }))}
@@ -251,10 +227,6 @@ const AdminHosting: React.FC = () => {
                                 onChange={e => setForm(prev => ({ ...prev, bandwidth: e.target.value }))}
                                 style={inputStyle} />
                         </div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: -8 }}>
-                            A yearly plan is auto-generated at (monthly amount × 12) minus the discount above.
-                        </div>
-
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <input type="checkbox" id="hosting_is_active" checked={form.is_active as boolean}
                                 onChange={e => setForm(prev => ({ ...prev, is_active: e.target.checked }))} style={{ width: 16, height: 16, cursor: 'pointer' }} />

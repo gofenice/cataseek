@@ -25,6 +25,13 @@ import {
     requestCancel,
     verifyCheckout,
 } from '../services/subscription-lifecycle.service';
+import {
+    getBaseCurrency,
+    localizePlan,
+    resolveTenantCurrency,
+    setTenantCurrency,
+    subscriptionPriceJoin,
+} from '../services/currency.service';
 
 const router = express.Router();
 
@@ -34,9 +41,10 @@ const router = express.Router();
 // first payment; full price resumes from the next cycle.
 async function getPlanChangeCredit(tenantId: number): Promise<{ credit: number; oldPlanName: string | null }> {
     const subs: any = await query(
-        `SELECT s.current_period_start, s.current_period_end, p.price, p.name
+        `SELECT s.current_period_start, s.current_period_end, COALESCE(cp.price, p.price) AS price, p.name
          FROM subscriptions s
          JOIN plans p ON s.plan_id = p.id
+         ${subscriptionPriceJoin('plans', 'p', 's', 'cp')}
          WHERE s.tenant_id = ? AND s.status = 'active'
          ORDER BY s.current_period_end DESC LIMIT 1`,
         [tenantId]
@@ -61,10 +69,11 @@ function effectiveMonthlyPrice(price: number | string, billingPeriod: string): n
 // ─── Helper: this tenant's current active subscription + plan details ─────────
 async function getActiveSubscriptionWithPlan(tenantId: number): Promise<any | null> {
     const subs: any = await query(
-        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id, s.gateway_status, s.cancel_at_period_end,
-                p.id AS plan_id, p.name AS plan_name, p.price, p.billing_period
+        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id, s.gateway_status, s.cancel_at_period_end, s.currency,
+                p.id AS plan_id, p.name AS plan_name, COALESCE(cp.price, p.price) AS price, p.billing_period
          FROM subscriptions s
          JOIN plans p ON s.plan_id = p.id
+         ${subscriptionPriceJoin('plans', 'p', 's', 'cp')}
          WHERE s.tenant_id = ? AND s.status = 'active'
            AND NOT (s.cancel_at_period_end = 1 AND s.current_period_end <= NOW())
          ORDER BY s.current_period_end DESC LIMIT 1`,
@@ -85,7 +94,7 @@ async function activateSubscription(opts: {
     amountOverride?: number; // actual amount paid (e.g. first charge after plan-change credit)
 }) {
     const { tenantId, plan } = opts;
-    const currency = opts.currency || 'USD';
+    const currency = opts.currency || plan.currency || 'USD';
     const billingReason = opts.billingReason || 'subscription_create';
     const invoiceAmount = opts.amountOverride !== undefined ? opts.amountOverride : Number(plan.price);
 
@@ -130,9 +139,9 @@ async function activateSubscription(opts: {
 
     // Insert subscription
     await query(
-        `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end, razorpay_subscription_id)
-         VALUES (?, ?, 'active', ?, ?, ?)`,
-        [tenantId, plan.id, periodStart, periodEnd, opts.razorpaySubscriptionId || null]
+        `INSERT INTO subscriptions (tenant_id, plan_id, status, current_period_start, current_period_end, razorpay_subscription_id, currency)
+         VALUES (?, ?, 'active', ?, ?, ?, ?)`,
+        [tenantId, plan.id, periodStart, periodEnd, opts.razorpaySubscriptionId || null, currency]
     );
 
     // Update tenant
@@ -173,11 +182,11 @@ async function activateSubscription(opts: {
         }],
     })
         .then((pdfBuffer) =>
-            sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, plan.name, invoiceAmount, pdfBuffer)
+            sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, plan.name, invoiceAmount, pdfBuffer, currency)
         )
         .catch((e) => console.error('Invoice email error:', e));
 
-    sendSubscriptionWelcomeEmail(tenant.email, tenant.store_name, plan.name, parseFloat(plan.price), periodEnd)
+    sendSubscriptionWelcomeEmail(tenant.email, tenant.store_name, plan.name, parseFloat(plan.price), periodEnd, currency)
         .catch((e) => console.error('Welcome email error:', e));
 
     return { invoiceNumber, periodStart, periodEnd, tenant };
@@ -204,11 +213,13 @@ export async function applyDuePlanChange(tenantId: number): Promise<void> {
 
     const plans: any = await query('SELECT * FROM plans WHERE id = ?', [pendingPlanId]);
     if (!plans || plans.length === 0) return;
+    // Stays in the currency of the subscription being replaced
+    const plan = (await localizePlan('plans', plans[0], sub.currency)) || (await localizePlan('plans', plans[0]));
 
     await activateSubscription({
         tenantId,
-        plan: plans[0],
-        currency: 'USD',
+        plan,
+        currency: plan.currency,
         billingReason: 'subscription_downgrade',
     });
 }
@@ -219,15 +230,42 @@ router.get('/payment-config', authenticateJWT, async (req: AuthRequest, res: Res
     try {
         const config = await getRazorpayConfig();
         const razorpayReady = config.enabled && !!config.key_id && !!config.key_secret;
+        await ensurePaymentTables();
+        const billing = await resolveTenantCurrency(req.user.id, req);
         res.json({
             gateway: razorpayReady ? 'razorpay' : 'demo',
             key_id: razorpayReady ? config.key_id : null,
-            currency: config.currency,
+            currency: billing.currency,
+            currencyLocked: billing.locked,
+            currencyOptions: billing.options,
             mode: config.mode,
         });
     } catch (error) {
         console.error('Payment config error:', error);
-        res.json({ gateway: 'demo', key_id: null, currency: 'USD', mode: 'test' });
+        res.json({ gateway: 'demo', key_id: null, currency: 'USD', currencyLocked: true, currencyOptions: ['USD'], mode: 'test' });
+    }
+});
+
+// ─── PUT /api/billing/currency ────────────────────────────────────────────────
+// Currency switcher. The currency follows the visitor's country by default; a
+// card issued elsewhere needs another one (Razorpay only charges Indian cards in
+// INR and foreign cards in the other currencies). Fixed while a subscription runs.
+router.put('/currency', authenticateJWT, async (req: AuthRequest, res: Response) => {
+    try {
+        const currency = String(req.body?.currency || '').toUpperCase();
+        await ensurePaymentTables();
+        const billing = await resolveTenantCurrency(req.user.id, req);
+        if (!billing.options.includes(currency)) {
+            return res.status(400).json({ error: 'That currency is not available' });
+        }
+        if (billing.locked && currency !== billing.currency) {
+            return res.status(400).json({ error: `Your subscription is billed in ${billing.currency}. Cancel it first to switch currency.` });
+        }
+        await setTenantCurrency(req.user.id, currency);
+        res.json({ currency });
+    } catch (error) {
+        console.error('Currency switch error:', error);
+        res.status(500).json({ error: 'Failed to change currency' });
     }
 });
 
@@ -347,7 +385,11 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
 
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        const plan = plans[0];
+
+        // The plan as sold in this tenant's billing currency
+        const billing = await resolveTenantCurrency(tenantId, req);
+        const plan = await localizePlan('plans', plans[0], billing.currency);
+        if (!plan) return res.status(409).json({ error: `This plan is not available in ${billing.currency} yet. Please contact support.` });
 
         // Downgrades are deferred to current_period_end (POST /downgrade), not
         // switched immediately — this endpoint is upgrade/new-subscription only.
@@ -422,6 +464,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             razorpaySubscriptionId: subscription.id,
             checkoutType,
             startsAt,
+            currency: plan.currency,
         });
 
         // Record a pending order so we can track abandoned checkouts too
@@ -431,7 +474,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             planName: plan.name,
             razorpaySubscriptionId: subscription.id,
             amount: firstCharge,
-            currency: config.currency,
+            currency: plan.currency,
             status: 'created',
             email: tenant.email,
             notes: checkoutType === 'trial'
@@ -442,7 +485,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         res.json({
             subscriptionId: subscription.id,
             keyId: config.key_id,
-            currency: config.currency,
+            currency: plan.currency,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
             checkoutType,
             firstChargeAt: startsAt,
@@ -489,6 +532,7 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
                 firstChargeAt: r.startsAt,
                 firstCharge: 0,
                 creditApplied: 0,
+                currency: plan.currency,
             });
         }
 
@@ -504,6 +548,7 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
             creditApplied,
             firstCharge: amount,
             periodEnd: r.periodEnd,
+            currency: plan.currency,
         });
     } catch (error: any) {
         if (error instanceof BillingError) return res.status(error.status).json({ error: error.message });
@@ -601,10 +646,15 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
 
         const newPlans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!newPlans || newPlans.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        const newPlan = newPlans[0];
 
+        await ensurePaymentTables();
         const sub = await getActiveSubscriptionWithPlan(tenantId);
         if (!sub) return res.status(404).json({ error: 'No active subscription found' });
+
+        // A plan change keeps the subscription's currency
+        const subCurrency = sub.currency || await getBaseCurrency();
+        const newPlan = await localizePlan('plans', newPlans[0], subCurrency);
+        if (!newPlan) return res.status(409).json({ error: `This plan is not available in ${subCurrency}. Please contact support.` });
 
         if (sub.cancel_at_period_end) {
             return res.status(400).json({ error: `Your subscription is cancelled and ends on ${new Date(sub.current_period_end).toLocaleDateString()}. You can choose a new plan once it ends.` });
@@ -660,7 +710,7 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
 
         res.json({
             message: `Your downgrade to ${newPlan.name} has been scheduled and will take effect on ${renewalDate}. You will continue to enjoy your current plan benefits until then.`,
-            scheduledPlan: { id: newPlan.id, name: newPlan.name, price: newPlan.price, billing_period: newPlan.billing_period },
+            scheduledPlan: { id: newPlan.id, name: newPlan.name, price: newPlan.price, billing_period: newPlan.billing_period, currency: newPlan.currency },
             effectiveDate: sub.current_period_end,
         });
     } catch (error) {
@@ -701,7 +751,11 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
 
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
-        const plan = plans[0];
+
+        await ensurePaymentTables();
+        const billing = await resolveTenantCurrency(tenantId, req);
+        const plan = await localizePlan('plans', plans[0], billing.currency);
+        if (!plan) return res.status(409).json({ error: `This plan is not available in ${billing.currency} yet. Please contact support.` });
 
         // Downgrades are deferred to current_period_end (POST /downgrade), not
         // switched immediately — this endpoint is upgrade/new-subscription only.
@@ -718,7 +772,7 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
         const { invoiceNumber, periodEnd } = await activateSubscription({
             tenantId,
             plan,
-            currency: 'USD',
+            currency: plan.currency,
             billingReason: creditApplied > 0 ? 'subscription_upgrade' : 'subscription_create',
             amountOverride: firstCharge,
         });
@@ -732,6 +786,7 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
             creditApplied,
             firstCharge,
             periodEnd,
+            currency: plan.currency,
         });
     } catch (error) {
         console.error('Billing subscribe error:', error);

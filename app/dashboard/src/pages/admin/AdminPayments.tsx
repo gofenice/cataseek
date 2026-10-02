@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '../../services/api';
+import { formatMoney } from '../../services/money';
 
 interface PaymentSettings {
     enabled: boolean;
@@ -13,21 +14,21 @@ interface PaymentSettings {
     key_source?: 'env' | 'db';
 }
 
-// One Cataseek plan (search or hosting) and its Razorpay plan per mode
+// One Cataseek plan (search or hosting): its price and Razorpay plan per currency
 interface PlanMappingRow {
     table: 'plans' | 'hosting_plans';
     id: number;
     name: string;
-    price: number;
     billing_period: string;
     is_active: number | boolean;
-    test_plan_id: string | null;
-    live_plan_id: string | null;
+    prices: Record<string, string | null>;
+    plan_ids: { test: Record<string, string | null>; live: Record<string, string | null> };
 }
 
 interface VerifyResult {
     plan_table: string;
     local_plan_id: number;
+    currency: string;
     razorpay_plan_id: string;
     razorpay_name?: string;
     ok: boolean;
@@ -65,36 +66,73 @@ const AdminPayments: React.FC = () => {
     });
     const [savingCompany, setSavingCompany] = useState(false);
 
-    // Razorpay plan mapping
+    // Razorpay plan mapping + per-currency prices
     const [mappingMode, setMappingMode] = useState<'test' | 'live'>('test');
     const [mappings, setMappings] = useState<PlanMappingRow[]>([]);
     const [mappingEdits, setMappingEdits] = useState<Record<string, string>>({});
     const [verifyResults, setVerifyResults] = useState<VerifyResult[] | null>(null);
     const [mappingBusy, setMappingBusy] = useState(false);
+    const [baseCurrency, setBaseCurrency] = useState('USD');
+    const [currencies, setCurrencies] = useState<string[]>(['USD']);
+    const [enabledCurrencies, setEnabledCurrencies] = useState<string[]>(['USD']);
+    const [mappingCurrency, setMappingCurrency] = useState('USD');
 
-    const mappingKey = (r: { table: string; id: number }, mode: string) => `${mode}:${r.table}:${r.id}`;
+    const mappingKey = (r: { table: string; id: number }, field: string) => `${mappingCurrency}:${field}:${r.table}:${r.id}`;
 
     const fetchMappings = useCallback(async () => {
         try {
             const res = await api.get('/admin/razorpay/plan-mappings');
             setMappings(res.data.plans || []);
             setMappingMode(res.data.mode || 'test');
+            setBaseCurrency(res.data.currency || 'USD');
+            setCurrencies(res.data.currencies || [res.data.currency || 'USD']);
+            setEnabledCurrencies(res.data.enabled_currencies || [res.data.currency || 'USD']);
+            setMappingCurrency(c => (res.data.currencies || []).includes(c) ? c : (res.data.currency || 'USD'));
             setMappingEdits({});
         } catch (e) { console.error(e); }
     }, []);
 
     useEffect(() => { fetchMappings(); }, [fetchMappings]);
 
+    const planLabel = (row: PlanMappingRow) => `${row.table === 'hosting_plans' ? 'Hosting — ' : ''}${row.name} (${row.billing_period})`;
+
     const saveMapping = async (row: PlanMappingRow, mode: 'test' | 'live') => {
-        const value = mappingEdits[mappingKey(row, mode)] ?? (mode === 'test' ? row.test_plan_id : row.live_plan_id) ?? '';
+        const value = mappingEdits[mappingKey(row, mode)] ?? row.plan_ids[mode][mappingCurrency] ?? '';
         setMappingBusy(true); setMsg('');
         try {
-            await api.put('/admin/razorpay/plan-mappings', { table: row.table, planId: row.id, mode, razorpayPlanId: value.trim() });
-            setMsg(`✅ ${row.name} (${row.billing_period}) ${mode} mapping saved`);
+            await api.put('/admin/razorpay/plan-mappings', { table: row.table, planId: row.id, mode, currency: mappingCurrency, razorpayPlanId: value.trim() });
+            setMsg(`✅ ${planLabel(row)} ${mappingCurrency} ${mode} mapping saved`);
             setVerifyResults(null);
             await fetchMappings();
         } catch (e: any) {
             setMsg('❌ ' + (e.response?.data?.error || 'Failed to save mapping'));
+        }
+        setMappingBusy(false);
+    };
+
+    const savePrice = async (row: PlanMappingRow) => {
+        const value = mappingEdits[mappingKey(row, 'price')] ?? '';
+        setMappingBusy(true); setMsg('');
+        try {
+            await api.put('/admin/razorpay/plan-prices', { table: row.table, planId: row.id, currency: mappingCurrency, price: value.trim() });
+            setMsg(`✅ ${planLabel(row)} ${mappingCurrency} price saved`);
+            setVerifyResults(null);
+            await fetchMappings();
+        } catch (e: any) {
+            setMsg('❌ ' + (e.response?.data?.error || 'Failed to save price'));
+        }
+        setMappingBusy(false);
+    };
+
+    const toggleCurrency = async (currency: string, on: boolean) => {
+        const next = enabledCurrencies.filter(c => c !== baseCurrency && c !== currency).concat(on ? [currency] : []);
+        setMappingBusy(true); setMsg('');
+        try {
+            await api.put('/admin/billing-currencies', { currencies: next });
+            setMsg(`✅ ${currency} is now ${on ? 'offered to customers' : 'switched off'}`);
+            await fetchMappings();
+        } catch (e: any) {
+            setMsg('❌ ' + (e.response?.data?.error || 'Failed to save currencies'));
         }
         setMappingBusy(false);
     };
@@ -104,8 +142,10 @@ const AdminPayments: React.FC = () => {
         try {
             const res = await api.post('/admin/razorpay/plan-mappings/verify');
             setVerifyResults(res.data.results || []);
-            const bad = (res.data.results || []).filter((r: VerifyResult) => !r.ok).length;
-            setMsg(bad === 0 ? `✅ All ${res.data.mode} plan mappings match Razorpay` : `❌ ${bad} mapping(s) do not match Razorpay — see below`);
+            const bad = (res.data.results || []).filter((r: VerifyResult) => !r.ok);
+            setMsg(bad.length === 0
+                ? `✅ All ${res.data.mode} plan mappings match Razorpay (all currencies)`
+                : `❌ ${bad.length} mapping(s) do not match Razorpay (${Array.from(new Set(bad.map((r: VerifyResult) => r.currency))).join(', ')}) — see the Check column`);
         } catch (e: any) {
             setMsg('❌ ' + (e.response?.data?.error || 'Verification failed'));
         }
@@ -113,10 +153,11 @@ const AdminPayments: React.FC = () => {
     };
 
     const createRazorpayPlan = async (row: PlanMappingRow) => {
-        if (!window.confirm(`Create a new Razorpay ${mappingMode} plan for ${row.name} (${row.billing_period}, ${row.price})? Only do this if no matching plan exists in the Razorpay Dashboard.`)) return;
+        const price = formatMoney(row.prices[mappingCurrency], mappingCurrency);
+        if (!window.confirm(`Create a new Razorpay ${mappingMode} plan for ${planLabel(row)} at ${price}? Only do this if no matching plan exists in the Razorpay Dashboard.`)) return;
         setMappingBusy(true); setMsg('');
         try {
-            const res = await api.post('/admin/razorpay/plan-mappings/create', { table: row.table, planId: row.id });
+            const res = await api.post('/admin/razorpay/plan-mappings/create', { table: row.table, planId: row.id, currency: mappingCurrency });
             setMsg('✅ ' + res.data.message);
             await fetchMappings();
         } catch (e: any) {
@@ -161,6 +202,7 @@ const AdminPayments: React.FC = () => {
             await api.put('/admin/payment-settings', form);
             setMsg('✅ Payment settings saved');
             await fetchSettings();
+            await fetchMappings(); // mode and base currency follow the saved settings
         } catch (e: any) {
             setMsg('❌ ' + (e.response?.data?.error || 'Save failed'));
         }
@@ -282,7 +324,7 @@ const AdminPayments: React.FC = () => {
                         </select>
                     </div>
                     <div>
-                        <label style={labelStyle}>Currency</label>
+                        <label style={labelStyle}>Base currency (plan prices)</label>
                         <select
                             value={form.currency}
                             onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}
@@ -365,21 +407,57 @@ const AdminPayments: React.FC = () => {
                 </div>
             </div>
 
-            {/* Razorpay plan mapping */}
+            {/* Razorpay plan mapping + currency prices */}
             <div className="glass" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                 <div>
-                    <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>Plan Mapping</h2>
+                    <h2 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-main)', margin: 0 }}>Plan Mapping &amp; Currencies</h2>
                     <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-                        Create each plan in the Razorpay Dashboard (test and live mode have separate plans) and paste its id here.
+                        A Razorpay plan has one fixed currency, so each Cataseek plan needs one Razorpay plan per currency (test and live mode
+                        have separate plans). Set the price, then paste the Razorpay plan id or create the plan from here.
                         Checkout only uses mapped plans whose amount, currency and period match. Active mode: <strong>{mappingMode}</strong>.
                     </p>
                 </div>
+
+                {/* Currencies offered to customers */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    <span style={{ fontWeight: 600, color: 'var(--text-main)' }}>Offered to customers:</span>
+                    {currencies.map(c => (
+                        <label key={c} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: c === baseCurrency ? 'default' : 'pointer' }}>
+                            <input
+                                type="checkbox"
+                                checked={enabledCurrencies.includes(c)}
+                                disabled={c === baseCurrency || mappingBusy}
+                                onChange={e => toggleCurrency(c, e.target.checked)}
+                            />
+                            {c}{c === baseCurrency ? ' (base)' : ''}
+                        </label>
+                    ))}
+                </div>
+                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>
+                    Customers see the currency of their country (India → INR, UK → GBP, Europe → EUR, everyone else → {baseCurrency}) and can
+                    change it on their Billing page. A currency can be switched on once every active plan has a price and a {mappingMode} Razorpay plan in it.
+                </p>
+
+                {/* Currency tabs */}
+                <div style={{ display: 'flex', gap: 6 }}>
+                    {currencies.map(c => (
+                        <button key={c} onClick={() => setMappingCurrency(c)}
+                            style={{
+                                padding: '0.35rem 0.9rem', borderRadius: 6, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer',
+                                background: c === mappingCurrency ? 'var(--primary)' : 'rgba(20,32,26,0.05)',
+                                color: c === mappingCurrency ? '#fff' : 'var(--text-muted)',
+                            }}>
+                            {c}
+                        </button>
+                    ))}
+                </div>
+
                 <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
                         <thead>
                             <tr style={{ borderBottom: '1px solid var(--border)', textAlign: 'left', color: 'var(--text-muted)' }}>
                                 <th style={{ padding: '0.5rem' }}>Plan</th>
-                                <th style={{ padding: '0.5rem' }}>Price</th>
+                                <th style={{ padding: '0.5rem' }}>Price ({mappingCurrency})</th>
                                 <th style={{ padding: '0.5rem' }}>Test plan id</th>
                                 <th style={{ padding: '0.5rem' }}>Live plan id</th>
                                 <th style={{ padding: '0.5rem' }}>Check</th>
@@ -387,17 +465,39 @@ const AdminPayments: React.FC = () => {
                         </thead>
                         <tbody>
                             {mappings.map(row => {
-                                const result = verifyResults?.find(r => r.plan_table === row.table && Number(r.local_plan_id) === Number(row.id));
-                                const currentId = mappingMode === 'test' ? row.test_plan_id : row.live_plan_id;
+                                const result = verifyResults?.find(r => r.plan_table === row.table && Number(r.local_plan_id) === Number(row.id) && r.currency === mappingCurrency);
+                                const currentId = row.plan_ids[mappingMode][mappingCurrency];
+                                const savedPrice = row.prices[mappingCurrency];
+                                const priceKey = mappingKey(row, 'price');
+                                const priceValue = mappingEdits[priceKey] ?? (savedPrice === null ? '' : String(Number(savedPrice)));
+                                const priceChanged = priceValue.trim() !== (savedPrice === null ? '' : String(Number(savedPrice)));
                                 return (
                                     <tr key={`${row.table}:${row.id}`} style={{ borderBottom: '1px solid var(--border)', opacity: row.is_active ? 1 : 0.5 }}>
                                         <td style={{ padding: '0.5rem', color: 'var(--text-main)' }}>
                                             {row.table === 'hosting_plans' ? 'Hosting — ' : ''}{row.name} <span style={{ color: 'var(--text-muted)' }}>({row.billing_period})</span>
                                         </td>
-                                        <td style={{ padding: '0.5rem' }}>{Number(row.price).toFixed(2)}</td>
+                                        <td style={{ padding: '0.5rem' }}>
+                                            {mappingCurrency === baseCurrency ? (
+                                                <span title="Base currency price — edit it on the Plans / Hosting Plans page">{formatMoney(savedPrice, mappingCurrency)}</span>
+                                            ) : (
+                                                <div style={{ display: 'flex', gap: 4 }}>
+                                                    <input
+                                                        type="number" min={0} step="0.01" value={priceValue} placeholder="not set"
+                                                        onChange={e => setMappingEdits(m => ({ ...m, [priceKey]: e.target.value }))}
+                                                        style={{ ...inputStyle, padding: '0.35rem 0.5rem', fontSize: '0.75rem', width: 96 }}
+                                                    />
+                                                    {priceChanged && (
+                                                        <button onClick={() => savePrice(row)} disabled={mappingBusy}
+                                                            style={{ background: 'var(--primary)', color: '#fff', padding: '0 0.6rem', borderRadius: 6, fontSize: '0.72rem', fontWeight: 600, cursor: 'pointer' }}>
+                                                            Save
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </td>
                                         {(['test', 'live'] as const).map(mode => {
                                             const key = mappingKey(row, mode);
-                                            const saved = (mode === 'test' ? row.test_plan_id : row.live_plan_id) || '';
+                                            const saved = row.plan_ids[mode][mappingCurrency] || '';
                                             const value = mappingEdits[key] ?? saved;
                                             return (
                                                 <td key={mode} style={{ padding: '0.5rem' }}>
@@ -422,6 +522,8 @@ const AdminPayments: React.FC = () => {
                                                 result.ok
                                                     ? <span style={{ color: '#99c124', fontWeight: 600 }} title={result.razorpay_name}>✓ matches</span>
                                                     : <span style={{ color: '#ef4444' }} title={result.problems.join('\n')}>✗ {result.problems[0]}</span>
+                                            ) : savedPrice === null ? (
+                                                <span style={{ color: 'var(--text-muted)' }}>set a price</span>
                                             ) : !currentId ? (
                                                 <button onClick={() => createRazorpayPlan(row)} disabled={mappingBusy}
                                                     style={{ background: 'transparent', color: 'var(--primary)', fontSize: '0.72rem', textDecoration: 'underline', cursor: 'pointer' }}>
@@ -511,7 +613,8 @@ const AdminPayments: React.FC = () => {
                     <li>The payment is verified server-side against the Razorpay subscription, the subscription activates, and an invoice is emailed.</li>
                     <li>Renewals arrive via the <code>subscription.charged</code> webhook — the same subscription's period extends and a new invoice is issued.</li>
                     <li>Cancelling stops renewal at Razorpay; the merchant keeps access until the paid period ends.</li>
-                    <li>If you change a plan's price, create a new Razorpay plan with the new amount and update the mapping — checkout refuses mismatched plans.</li>
+                    <li>If you change a plan's price (in any currency), create a new Razorpay plan with the new amount and update the mapping — checkout refuses mismatched plans. Existing subscribers keep paying the old price.</li>
+                    <li>A customer is billed in one currency. Razorpay charges Indian cards only in INR and cards from other countries only in the other currencies, so customers can switch currency on their Billing page until they subscribe.</li>
                     <li>All payments appear under <strong style={{ color: 'var(--text-main)' }}>Orders</strong> in this admin panel.</li>
                 </ol>
             </div>

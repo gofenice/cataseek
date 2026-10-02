@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Download, CreditCard, TrendingUp, Clock, CheckCircle, XCircle, AlertCircle, FileText, PartyPopper, Receipt } from 'lucide-react';
 import api from '../services/api';
 import { getCachedData, setCachedData } from '../services/cache';
+import { formatMoney } from '../services/money';
+import CurrencySwitcher from '../components/CurrencySwitcher';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 interface Plan {
@@ -60,7 +62,9 @@ interface Invoice {
 interface PaymentConfig {
     gateway: 'razorpay' | 'demo';
     key_id: string | null;
-    currency: string;
+    currency: string; // this store's billing currency
+    currencyLocked?: boolean;
+    currencyOptions?: string[];
     mode: 'test' | 'live';
 }
 
@@ -97,9 +101,12 @@ const parseFeatures = (f: string | string[]): string[] => {
     try { return JSON.parse(f); } catch { return []; }
 };
 
-const CURRENCY_SYMBOLS: Record<string, string> = {
-    INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'د.إ', SGD: 'S$',
-};
+// Razorpay charges Indian cards only in INR and cards from other countries only
+// in the other currencies — the usual reason for "Currency is not supported".
+const withCurrencyHint = (msg: string, options?: string[]) =>
+    /currency.*not supported/i.test(msg) && (options?.length || 0) > 1
+        ? `${msg} — your card may be issued in another country: change the Currency at the top of this page and try again.`
+        : msg;
 
 // Load Razorpay Checkout script once
 let razorpayScriptPromise: Promise<void> | null = null;
@@ -216,7 +223,8 @@ const Billing: React.FC = () => {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const currencySymbol = CURRENCY_SYMBOLS[payConfig?.currency || 'USD'] || '$';
+    const currency = payConfig?.currency || 'USD';
+    const money = (amount: number | string | null | undefined) => formatMoney(amount, currency);
 
     // ── Razorpay checkout flow ──
     const handleRazorpayCheckout = async (planId: number) => {
@@ -302,7 +310,7 @@ const Billing: React.FC = () => {
             await fetchData();
         } catch (e: any) {
             const msg = e.response?.data?.error || e.message || 'Failed to subscribe';
-            if (msg !== 'Checkout cancelled') setMessage(`❌ ${msg}`);
+            if (msg !== 'Checkout cancelled') setMessage(`❌ ${withCurrencyHint(msg, payConfig?.currencyOptions)}`);
         }
         setSubscribing(null);
     };
@@ -424,10 +432,10 @@ const Billing: React.FC = () => {
                         <div style={{ background: 'rgba(20,32,26,0.06)', borderRadius: 10, padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 10, textAlign: 'left' }}>
                             {[
                                 ['Plan', `${confirmation.planName}`],
-                                ['Amount', `${currencySymbol}${confirmation.price} / ${confirmation.billingPeriod}`],
+                                ['Amount', `${money(confirmation.price)} / ${confirmation.billingPeriod}`],
                                 ...(confirmation.creditApplied && confirmation.creditApplied > 0 ? [
-                                    ['Unused plan credit', `−${currencySymbol}${Number(confirmation.creditApplied).toFixed(2)}`],
-                                    ['First payment', `${currencySymbol}${Number(confirmation.firstCharge).toFixed(2)}`],
+                                    ['Unused plan credit', `−${money(confirmation.creditApplied)}`],
+                                    ['First payment', money(confirmation.firstCharge)],
                                 ] : []),
                                 ...(confirmation.trial ? [
                                     ['First payment', fmt(confirmation.firstChargeAt || null)],
@@ -461,9 +469,18 @@ const Billing: React.FC = () => {
             )}
 
             {/* Header */}
-            <div>
-                <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: 4 }}>Billing & Plans</h1>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Manage your subscription, monitor usage, and download invoices</p>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                <div>
+                    <h1 style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)', marginBottom: 4 }}>Billing & Plans</h1>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Manage your subscription, monitor usage, and download invoices</p>
+                </div>
+                <CurrencySwitcher
+                    currency={currency}
+                    options={payConfig?.currencyOptions || []}
+                    locked={!!payConfig?.currencyLocked}
+                    onChanged={fetchData}
+                    onError={m => setMessage(`❌ ${m}`)}
+                />
             </div>
 
             {/* Flash message */}
@@ -491,7 +508,7 @@ const Billing: React.FC = () => {
                     {subscription ? (
                         <>
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>
-                                {currencySymbol}{subscription.price} / {subscription.billing_period}
+                                {money(subscription.price)} / {subscription.billing_period}
                             </div>
                             {paused ? (
                                 <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -615,7 +632,7 @@ const Billing: React.FC = () => {
                                     <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: 4 }}>{plan.description}</div>
                                 </div>
                                 <div>
-                                    <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)' }}>{currencySymbol}{plan.price}</span>
+                                    <span style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)' }}>{money(plan.price)}</span>
                                     <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>/{plan.billing_period}</span>
                                 </div>
                                 <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column', gap: 6, flex: 1 }}>
@@ -681,7 +698,7 @@ const Billing: React.FC = () => {
                                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
                                             {inv.period_start && inv.period_end ? `${fmt(inv.period_start)} – ${fmt(inv.period_end)}` : '—'}
                                         </td>
-                                        <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>${Number(inv.amount).toFixed(2)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{inv.currency}</span></td>
+                                        <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>{formatMoney(inv.amount, inv.currency)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{inv.currency}</span></td>
                                         <td style={{ padding: '0.85rem 1rem' }}><StatusBadge status={inv.status} /></td>
                                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{fmt(inv.created_at)}</td>
                                         <td style={{ padding: '0.85rem 1rem' }}>
@@ -742,7 +759,7 @@ const Billing: React.FC = () => {
                                             <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>{fmt(o.created_at)}</td>
                                             <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 500 }}>{o.plan_name || '—'}</td>
                                             <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>
-                                                {Number(o.amount).toFixed(2)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{o.currency}</span>
+                                                {formatMoney(o.amount, o.currency)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{o.currency}</span>
                                             </td>
                                             <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontSize: '0.82rem', textTransform: 'capitalize' }}>{o.method || '—'}</td>
                                             <td style={{ padding: '0.85rem 1rem', color: 'var(--text-muted)', fontFamily: 'monospace', fontSize: '0.75rem' }}>{o.razorpay_payment_id || '—'}</td>

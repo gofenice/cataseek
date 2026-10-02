@@ -11,6 +11,7 @@ import {
     PlanTable,
 } from './razorpay.service';
 import { ensureHostingTables } from './hosting.service';
+import { localizePlan } from './currency.service';
 import { invalidateTenantApiCache, invalidateTenantPlanCache } from '../middleware/auth';
 
 // ─── Razorpay subscription lifecycle (search + hosting) ───────────────────────
@@ -128,13 +129,14 @@ export async function createCheckoutRecord(o: {
     razorpaySubscriptionId: string;
     checkoutType: CheckoutType;
     startsAt?: Date | null;
+    currency?: string | null;
 }): Promise<number> {
     await ensureTables(o.product);
     const { subTable, planFk } = PRODUCTS[o.product];
     const result: any = await query(
-        `INSERT INTO ${subTable} (tenant_id, ${planFk}, status, razorpay_subscription_id, gateway_status, checkout_type, starts_at)
-         VALUES (?, ?, 'incomplete', ?, 'created', ?, ?)`,
-        [o.tenantId, o.planId, o.razorpaySubscriptionId, o.checkoutType, o.startsAt || null]
+        `INSERT INTO ${subTable} (tenant_id, ${planFk}, status, razorpay_subscription_id, gateway_status, checkout_type, starts_at, currency)
+         VALUES (?, ?, 'incomplete', ?, 'created', ?, ?, ?)`,
+        [o.tenantId, o.planId, o.razorpaySubscriptionId, o.checkoutType, o.startsAt || null, o.currency || null]
     );
     return result.insertId;
 }
@@ -194,7 +196,7 @@ async function issueInvoice(o: {
                 amount: o.amount,
             }],
         })
-            .then((pdfBuffer) => sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, o.planName, o.amount, pdfBuffer))
+            .then((pdfBuffer) => sendInvoiceEmail(tenant.email, tenant.store_name, invoiceNumber, o.planName, o.amount, pdfBuffer, o.currency))
             .catch((e) => console.error('Invoice email error:', e));
     }
 
@@ -260,10 +262,12 @@ export async function recordCharge(o: {
     let row = await findSubscriptionByGatewayId(product, rzpSub.id);
 
     // The Razorpay subscription's plan is the source of truth for what was bought
+    // (and in which currency)
     let plan = await findLocalPlanByRazorpayPlanId(config.mode, cfg.planTable, rzpSub.plan_id);
     if (!plan) {
         const fallbackId = row ? Number(row[cfg.planFk]) : parseInt(rzpSub.notes?.plan_id || '0');
-        plan = await loadPlan(cfg.planTable, fallbackId);
+        const fallback = await loadPlan(cfg.planTable, fallbackId);
+        plan = fallback && ((await localizePlan(cfg.planTable, fallback, row?.currency)) || fallback);
         if (plan) console.warn(`[billing] Razorpay plan ${rzpSub.plan_id} is not mapped (${config.mode}); using ${cfg.planTable} #${plan.id}`);
     }
     if (!plan) throw new Error(`Cannot resolve the plan for Razorpay subscription ${rzpSub.id}`);
@@ -277,6 +281,7 @@ export async function recordCharge(o: {
                 product, tenantId, planId: plan.id, razorpaySubscriptionId: rzpSub.id,
                 checkoutType: (rzpSub.notes?.checkout_type as CheckoutType) || 'immediate',
                 startsAt: unixToDate(rzpSub.start_at),
+                currency: plan.currency || null,
             });
         } catch (e: any) {
             // A concurrent delivery adopted it first (unique razorpay_subscription_id)
@@ -293,7 +298,7 @@ export async function recordCharge(o: {
     const periodStart = o.period?.start || unixToDate(rzpSub.current_start) || new Date();
     const periodEnd = o.period?.end || unixToDate(rzpSub.current_end) || addBillingPeriod(periodStart, plan.billing_period);
     const amount = Math.round(Number(payment?.amount || 0)) / 100;
-    const currency = String(payment?.currency || config.currency).toUpperCase();
+    const currency = String(payment?.currency || plan.currency || config.currency).toUpperCase();
 
     const billingReason = o.billingReason || (product === 'hosting'
         ? (isFirstActivation ? 'hosting_create' : 'hosting_cycle')
@@ -374,7 +379,7 @@ export async function recordCharge(o: {
     if (invoice.created && isFirstActivation && !replacedLocally && product === 'search') {
         const tenants: any = await query('SELECT store_name, email FROM tenants WHERE id = ?', [tenantId]);
         if (tenants?.[0]) {
-            sendSubscriptionWelcomeEmail(tenants[0].email, tenants[0].store_name, plan.name, parseFloat(plan.price), periodEnd)
+            sendSubscriptionWelcomeEmail(tenants[0].email, tenants[0].store_name, plan.name, parseFloat(plan.price), periodEnd, plan.currency || currency)
                 .catch((e) => console.error('Welcome email error:', e));
         }
     }
@@ -425,7 +430,7 @@ export async function handleAuthenticated(o: { product: Product; rzpSub: any; pa
                 razorpaySubscriptionId: rzpSub.id,
                 razorpayPaymentId: payment.id,
                 amount: Number(payment.amount || 0) / 100,
-                currency: String(payment.currency || 'INR').toUpperCase(),
+                currency: String(payment.currency || row.currency || 'INR').toUpperCase(),
                 status: payment.status === 'refunded' ? 'refunded' : 'authorized',
                 method: payment.method || null,
                 email: payment.email || null,
@@ -646,8 +651,8 @@ export async function verifyCheckout(o: {
         console.error(`[billing] verify: Razorpay plan ${rzpSub.plan_id} is not mapped in ${config.mode} mode`);
         throw new BillingError(409, 'The purchased plan is not recognised. Please contact support.');
     }
-    if (Number(plan.id) !== Number(row[cfg.planFk])) {
-        console.error(`[billing] verify: subscription ${subscriptionId} is on ${cfg.planTable} #${plan.id}, checkout row says #${row[cfg.planFk]}`);
+    if (Number(plan.id) !== Number(row[cfg.planFk]) || (row.currency && plan.currency && row.currency !== plan.currency)) {
+        console.error(`[billing] verify: subscription ${subscriptionId} is on ${cfg.planTable} #${plan.id} ${plan.currency}, checkout row says #${row[cfg.planFk]} ${row.currency}`);
         throw new BillingError(409, 'The purchased plan does not match this checkout. Please contact support.');
     }
 

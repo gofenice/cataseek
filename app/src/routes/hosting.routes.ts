@@ -11,8 +11,13 @@ import {
     requestCancel,
     verifyCheckout,
 } from '../services/subscription-lifecycle.service';
+import { ensurePaymentTables } from '../services/razorpay.service';
+import { localizePlan, localizePlans, resolveTenantCurrency, subscriptionPriceJoin } from '../services/currency.service';
 
 const router = express.Router();
+
+// Hosting is sold monthly only (yearly rows may remain from the old auto-generated siblings)
+const SELLABLE = "is_active = TRUE AND billing_period = 'monthly'";
 
 // ─── Helper: is hosting enabled for this tenant? ─────────────────────────────
 async function hostingEnabledFor(tenantId: number): Promise<boolean> {
@@ -29,21 +34,26 @@ router.get('/plans', authenticateJWT, async (req: AuthRequest, res: Response) =>
         const enabled = await hostingEnabledFor(req.user.id);
         if (!enabled) return res.json({ enabled: false, plans: [], subscription: null });
 
-        const plans: any = await query(
-            'SELECT id, name, price, storage_gb, ram_gb, bandwidth, billing_period, parent_plan_id, yearly_discount_percent FROM hosting_plans WHERE is_active = TRUE ORDER BY price ASC'
-        );
-
+        await ensurePaymentTables();
         await expireEndedSubscriptions(req.user.id);
+        const billing = await resolveTenantCurrency(req.user.id, req);
+
+        const rows: any = await query(
+            `SELECT id, name, price, storage_gb, ram_gb, bandwidth, billing_period FROM hosting_plans WHERE ${SELLABLE} ORDER BY price ASC`
+        );
+        const plans = await localizePlans('hosting_plans', rows, billing.currency);
+
         const subs: any = await query(
-            `SELECT hs.*, hp.name AS plan_name, hp.price, hp.storage_gb, hp.ram_gb, hp.bandwidth, hp.billing_period
+            `SELECT hs.*, hp.name AS plan_name, COALESCE(cp.price, hp.price) AS price, hp.storage_gb, hp.ram_gb, hp.bandwidth, hp.billing_period
              FROM hosting_subscriptions hs
              JOIN hosting_plans hp ON hs.hosting_plan_id = hp.id
+             ${subscriptionPriceJoin('hosting_plans', 'hp', 'hs', 'cp')}
              WHERE hs.tenant_id = ? AND hs.status = 'active'
              ORDER BY hs.current_period_end DESC LIMIT 1`,
             [req.user.id]
         );
 
-        res.json({ enabled: true, plans, subscription: subs.length > 0 ? subs[0] : null });
+        res.json({ enabled: true, plans, currency: billing.currency, subscription: subs.length > 0 ? subs[0] : null });
     } catch (error) {
         console.error('Hosting plans fetch error:', error);
         res.status(500).json({ error: 'Failed to fetch hosting plans' });
@@ -64,9 +74,13 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const config = await getRazorpayConfig();
         if (!config.enabled) return res.status(400).json({ error: 'Online payments are not enabled' });
 
-        const plans: any = await query('SELECT * FROM hosting_plans WHERE id = ? AND is_active = TRUE', [planId]);
+        const plans: any = await query(`SELECT * FROM hosting_plans WHERE id = ? AND ${SELLABLE}`, [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Hosting plan not found' });
-        const plan = plans[0];
+
+        await ensurePaymentTables();
+        const billing = await resolveTenantCurrency(tenantId, req);
+        const plan = await localizePlan('hosting_plans', plans[0], billing.currency);
+        if (!plan) return res.status(409).json({ error: `This hosting plan is not available in ${billing.currency} yet. Please contact support.` });
 
         // Buying the plan already running would charge a second full cycle
         const current: any = await query(
@@ -87,6 +101,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             planId: plan.id,
             razorpaySubscriptionId: subscription.id,
             checkoutType: 'immediate',
+            currency: plan.currency,
         });
 
         await recordOrder({
@@ -95,7 +110,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             planName: `Hosting — ${plan.name}`,
             razorpaySubscriptionId: subscription.id,
             amount: Number(plan.price),
-            currency: config.currency,
+            currency: plan.currency,
             status: 'created',
             email: tenant.email,
             notes: 'Hosting checkout initiated',
@@ -105,7 +120,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         res.json({
             subscriptionId: subscription.id,
             keyId: config.key_id,
-            currency: config.currency,
+            currency: plan.currency,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
             prefill: { email: tenant.email, name: tenant.store_name },
         });
@@ -143,6 +158,7 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
             invoiceNumber: r.invoiceNumber,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
             periodEnd: r.periodEnd,
+            currency: plan.currency,
         });
     } catch (error: any) {
         if (error instanceof BillingError) return res.status(error.status).json({ error: error.message });
@@ -168,14 +184,18 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
             return res.status(400).json({ error: 'Online payment is required. Use the checkout flow.' });
         }
 
-        const plans: any = await query('SELECT * FROM hosting_plans WHERE id = ? AND is_active = TRUE', [planId]);
+        const plans: any = await query(`SELECT * FROM hosting_plans WHERE id = ? AND ${SELLABLE}`, [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Hosting plan not found' });
-        const plan = plans[0];
+
+        await ensurePaymentTables();
+        const billing = await resolveTenantCurrency(tenantId, req);
+        const plan = await localizePlan('hosting_plans', plans[0], billing.currency);
+        if (!plan) return res.status(409).json({ error: `This hosting plan is not available in ${billing.currency} yet. Please contact support.` });
 
         const { invoiceNumber, periodEnd } = await activateHostingSubscription({
             tenantId,
             plan,
-            currency: 'USD',
+            currency: plan.currency,
             billingReason: 'hosting_create',
         });
 
@@ -184,6 +204,7 @@ router.post('/subscribe', authenticateJWT, async (req: AuthRequest, res: Respons
             invoiceNumber,
             plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
             periodEnd,
+            currency: plan.currency,
         });
     } catch (error) {
         console.error('Hosting demo subscribe error:', error);

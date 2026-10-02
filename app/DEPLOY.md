@@ -79,6 +79,14 @@ Then issue HTTPS with `certbot --nginx` (or use Caddy for automatic TLS).
      `subscription.paused`, `subscription.resumed`, `subscription.updated`, `payment.failed`.
 4. Enable Payment Settings → "Enable Razorpay checkout".
 5. Complete Razorpay KYC and submit your site (Terms/Privacy/Refund/Contact pages are in `../filez/`).
+6. Extra currencies (optional). Razorpay charges Indian cards only in INR and cards issued elsewhere
+   only in the other currencies, so each currency needs its own price and Razorpay plan:
+   Admin → Payment Settings → Plan Mapping & Currencies → pick the currency tab, enter each plan's
+   price, then paste the Razorpay plan id (or **Create in Razorpay**), **Verify mapping**, and tick the
+   currency under "Offered to customers". Customers get the currency of their country
+   (India → INR, UK → GBP, Europe → EUR, otherwise the base currency) and can change it on their
+   Billing page until they subscribe. The country comes from Cloudflare's `CF-IPCountry` header, so
+   the site must stay proxied through Cloudflare (Network → IP Geolocation on).
 
 ## 8. Landing site
 Upload `../filez/*.html`, `cataseek-app.jsx`, `tweaks-panel.jsx`, `legal-style.css` to your static host on `yourdomain.com`.

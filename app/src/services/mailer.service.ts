@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { formatMoney } from './currency.service';
 
 // ─── Transport ────────────────────────────────────────────────────────────────
 const transporter = nodemailer.createTransport({
@@ -148,6 +149,7 @@ export async function sendSubscriptionWelcomeEmail(
   planName: string,
   amount: number,
   periodEnd: Date,
+  currency = 'USD',
 ) {
   const formattedDate = periodEnd.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const dashboardUrl = getConsoleUrl();
@@ -158,7 +160,7 @@ export async function sendSubscriptionWelcomeEmail(
     <p style="margin: 0 0 16px 0; color: #3A4B41; font-size: 15px; line-height: 1.6;">Thank you for subscribing! Your <strong>${planName}</strong> plan is now active. Here is a summary of your subscription:</p>
     ${buildBox(`
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Plan:</strong> ${planName}</p>
-      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Amount:</strong> $${amount.toFixed(2)} USD</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Amount:</strong> ${formatMoney(amount, currency)}</p>
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Next Renewal Date:</strong> ${formattedDate}</p>
     `)}
     <p style="margin: 0 0 16px 0; color: #3A4B41; font-size: 15px; line-height: 1.6;">Your Cataseek search engine is fully operational. Head to your dashboard to manage product sync and search settings.</p>
@@ -180,6 +182,7 @@ export async function sendRenewalReminderEmail(
   planName: string,
   amount: number,
   renewalDate: Date,
+  currency = 'USD',
 ) {
   const formattedDate = renewalDate.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   const billingUrl = `${getConsoleUrl()}/billing`;
@@ -190,7 +193,7 @@ export async function sendRenewalReminderEmail(
     <p style="margin: 0 0 16px 0; color: #3A4B41; font-size: 15px; line-height: 1.6;">This is a quick notification that your <strong>${planName}</strong> subscription is scheduled for automatic renewal.</p>
     ${buildBox(`
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Plan:</strong> ${planName}</p>
-      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Renewal Amount:</strong> $${amount.toFixed(2)} USD</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Renewal Amount:</strong> ${formatMoney(amount, currency)}</p>
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Renewal Date:</strong> ${formattedDate}</p>
     `)}
     <p style="margin: 0 0 16px 0; color: #3A4B41; font-size: 15px; line-height: 1.6;">No action is required if your payment details are up to date. You can manage your billing preferences anytime.</p>
@@ -213,6 +216,7 @@ export async function sendInvoiceEmail(
   planName: string,
   amount: number,
   pdfBuffer: Buffer,
+  currency = 'USD',
 ) {
   const billingUrl = `${getConsoleUrl()}/billing`;
 
@@ -223,7 +227,7 @@ export async function sendInvoiceEmail(
     ${buildBox(`
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Invoice #:</strong> ${invoiceNumber}</p>
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Plan:</strong> ${planName}</p>
-      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Amount Paid:</strong> $${amount.toFixed(2)} USD</p>
+      <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Amount Paid:</strong> ${formatMoney(amount, currency)}</p>
       <p style="margin: 4px 0; font-size: 14px; color: #2A3B31;"><strong style="color: #14201A;">Status:</strong> Paid ✅</p>
     `)}
     <p style="margin: 0 0 16px 0; color: #3A4B41; font-size: 15px; line-height: 1.6;">You can also access and download your past invoices anytime from your billing dashboard.</p>

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import api from '../../services/api';
+import { formatMoney } from '../../services/money';
 
 interface Order {
     id: number;
@@ -18,9 +19,9 @@ interface Order {
 
 interface Summary {
     total_orders: number;
-    total_revenue: number | null;
-    revenue_this_month: number | null;
     failed_count: number;
+    // One row per currency — amounts in different currencies are never added together
+    revenue_by_currency?: Array<{ currency: string; total_revenue: number; revenue_this_month: number }>;
 }
 
 const STATUS_STYLES: Record<string, { color: string; bg: string; label: string }> = {
@@ -61,10 +62,15 @@ const AdminOrders: React.FC = () => {
         return () => clearTimeout(t);
     }, [fetchOrders, search]);
 
+    const revenue = summary?.revenue_by_currency || [];
+    const revenueLines = (field: 'total_revenue' | 'revenue_this_month') => revenue.length === 0
+        ? '—'
+        : revenue.map(r => <div key={r.currency}>{formatMoney(r[field], r.currency)}</div>);
+
     const cards = [
         { label: 'Total Orders', value: summary?.total_orders ?? 0, color: '#059669' },
-        { label: 'Total Revenue', value: `${Number(summary?.total_revenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#99c124' },
-        { label: 'Revenue This Month', value: `${Number(summary?.revenue_this_month || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, color: '#f59e0b' },
+        { label: 'Total Revenue', value: revenueLines('total_revenue'), color: '#99c124' },
+        { label: 'Revenue This Month', value: revenueLines('revenue_this_month'), color: '#f59e0b' },
         { label: 'Failed Payments', value: summary?.failed_count ?? 0, color: '#ef4444' },
     ];
 
@@ -140,7 +146,7 @@ const AdminOrders: React.FC = () => {
                                         </td>
                                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontSize: '0.875rem' }}>{o.plan_name || '—'}</td>
                                         <td style={{ padding: '0.85rem 1rem', color: 'var(--text-main)', fontWeight: 600 }}>
-                                            {Number(o.amount).toFixed(2)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{o.currency}</span>
+                                            {formatMoney(o.amount, o.currency)} <span style={{ color: 'var(--text-muted)', fontWeight: 400, fontSize: '0.75rem' }}>{o.currency}</span>
                                         </td>
                                         <td style={{ padding: '0.85rem 1rem' }}>
                                             <span style={{ background: s.bg, color: s.color, padding: '0.2rem 0.6rem', borderRadius: 20, fontSize: '0.75rem', fontWeight: 600 }}>
