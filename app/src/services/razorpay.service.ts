@@ -297,6 +297,29 @@ export function comparePlan(rzpPlan: any, localPlan: any, currency: string): str
     return problems;
 }
 
+// Razorpay answers bursts of API calls with 429 "Too many requests" — retry those a few times
+export async function withRateLimitRetry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return await fn();
+        } catch (e: any) {
+            if (e?.statusCode !== 429 || attempt >= attempts) throw e;
+            await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
+    }
+}
+
+// Every plan of the current mode in a few list calls, instead of one fetch per
+// mapped plan (with four currencies that is ~40 calls and hits the rate limit).
+export async function fetchAllRazorpayPlans(client: Razorpay): Promise<Map<string, any>> {
+    const plans = new Map<string, any>();
+    for (let skip = 0; ; skip += 100) {
+        const page: any = await withRateLimitRetry(() => client.plans.all({ count: 100, skip }));
+        for (const p of page?.items || []) plans.set(p.id, p);
+        if (!page?.items || page.items.length < 100) return plans;
+    }
+}
+
 // Validated mappings are cached briefly so checkout doesn't fetch the plan every time
 const validatedPlans = new Map<string, number>();
 const PLAN_VALIDATION_TTL_MS = 10 * 60 * 1000;
@@ -318,7 +341,7 @@ export async function resolveRazorpayPlanForCheckout(plan: any, table: PlanTable
 
     let rzpPlan: any;
     try {
-        rzpPlan = await client.plans.fetch(rzpPlanId);
+        rzpPlan = await withRateLimitRetry(() => client.plans.fetch(rzpPlanId));
     } catch (e: any) {
         throw new PlanMappingError(`Razorpay plan ${rzpPlanId} could not be fetched: ${e?.error?.description || e?.message}`);
     }

@@ -11,6 +11,8 @@ import {
     setPlanMapping,
     comparePlan,
     createAndMapRazorpayPlan,
+    fetchAllRazorpayPlans,
+    withRateLimitRetry,
     PlanMappingError,
     PlanTable,
 } from '../services/razorpay.service';
@@ -777,6 +779,7 @@ router.post('/razorpay/plan-mappings/verify', async (req: AuthRequest, res: Resp
         const { client, config } = await getRazorpayClient();
         await ensurePaymentTables();
         const mappings: any = await query('SELECT plan_table, local_plan_id, currency, razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ?', [config.mode]);
+        const rzpPlans = await fetchAllRazorpayPlans(client);
         const results: any[] = [];
         for (const m of mappings) {
             const rows: any = await query(`SELECT * FROM ${m.plan_table} WHERE id = ?`, [m.local_plan_id]);
@@ -785,7 +788,8 @@ router.post('/razorpay/plan-mappings/verify', async (req: AuthRequest, res: Resp
             const info = { ...m, name: rows[0].name, billing_period: rows[0].billing_period };
             if (!plan) { results.push({ ...info, ok: false, problems: [`No ${m.currency} price is set for this plan`] }); continue; }
             try {
-                const rzpPlan: any = await client.plans.fetch(m.razorpay_plan_id);
+                const rzpPlan: any = rzpPlans.get(m.razorpay_plan_id)
+                    || await withRateLimitRetry(() => client.plans.fetch(m.razorpay_plan_id));
                 const problems = comparePlan(rzpPlan, plan, m.currency);
                 results.push({ ...info, razorpay_name: rzpPlan?.item?.name, ok: problems.length === 0, problems });
             } catch (e: any) {

@@ -12,7 +12,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 import pool, { query } from '../config/database';
-import { ensurePaymentTables, setPlanMapping, comparePlan, getRazorpayClient, PlanTable } from '../services/razorpay.service';
+import { ensurePaymentTables, setPlanMapping, comparePlan, getRazorpayClient, fetchAllRazorpayPlans, withRateLimitRetry, PlanTable } from '../services/razorpay.service';
 import { ensureHostingTables } from '../services/hosting.service';
 import { SUPPORTED_CURRENCIES, getBaseCurrency, localizePlan } from '../services/currency.service';
 
@@ -42,12 +42,13 @@ async function verify() {
     const { client, config } = await getRazorpayClient();
     const mappings: any = await query('SELECT plan_table, local_plan_id, currency, razorpay_plan_id FROM razorpay_plan_mappings WHERE mode = ?', [config.mode]);
     console.log(`Verifying ${mappings.length} ${config.mode} mapping(s)`);
+    const rzpPlans = await fetchAllRazorpayPlans(client);
     let bad = 0;
     for (const m of mappings) {
         const rows: any = await query(`SELECT * FROM ${m.plan_table} WHERE id = ?`, [m.local_plan_id]);
         const plan = await localizePlan(m.plan_table, rows?.[0], m.currency);
         try {
-            const rzp: any = await client.plans.fetch(m.razorpay_plan_id);
+            const rzp: any = rzpPlans.get(m.razorpay_plan_id) || await withRateLimitRetry(() => client.plans.fetch(m.razorpay_plan_id));
             const problems = plan ? comparePlan(rzp, plan, m.currency) : [rows?.[0] ? `no ${m.currency} price set` : 'local plan missing'];
             if (problems.length) bad++;
             console.log(`  ${problems.length ? '✗' : '✓'} ${m.plan_table} #${m.local_plan_id} ${m.currency} → ${m.razorpay_plan_id} "${rzp?.item?.name}" ${rzp?.period} ${rzp?.item?.amount} ${rzp?.item?.currency} ${problems.join('; ')}`);
