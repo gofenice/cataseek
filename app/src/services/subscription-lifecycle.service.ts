@@ -22,7 +22,9 @@ import { invalidateTenantApiCache, invalidateTenantPlanCache } from '../middlewa
 //
 // Local `status` = what the customer can access:
 //   incomplete → checkout started, nothing authorised yet
-//   trialing   → mandate authorised during the free trial; first charge at starts_at
+//   trialing   → mandate authorised, first charge at starts_at: a plan picked during
+//                the free trial, or a downgrade that replaces the current
+//                subscription when its paid period ends (checkout_type 'downgrade')
 //   active     → paid (cancel_at_period_end = access until current_period_end)
 //   past_due   → halted / paused at Razorpay, access removed
 //   cancelled  → ended
@@ -30,7 +32,7 @@ import { invalidateTenantApiCache, invalidateTenantPlanCache } from '../middlewa
 // active, pending, halted, paused, cancelled, completed, expired).
 
 export type Product = 'search' | 'hosting';
-export type CheckoutType = 'immediate' | 'trial' | 'upgrade';
+export type CheckoutType = 'immediate' | 'trial' | 'upgrade' | 'downgrade';
 
 interface ProductConfig {
     subTable: 'subscriptions' | 'hosting_subscriptions';
@@ -292,6 +294,7 @@ export async function recordCharge(o: {
     const tenantId = Number(row.tenant_id);
 
     const isFirstActivation = row.status === 'incomplete' || row.status === 'trialing';
+    const isScheduledDowngrade = isFirstActivation && row.checkout_type === 'downgrade';
     const replacedLocally = row.status === 'cancelled';
     const planChanged = !isFirstActivation && Number(row[cfg.planFk]) !== Number(plan.id);
 
@@ -302,7 +305,8 @@ export async function recordCharge(o: {
 
     const billingReason = o.billingReason || (product === 'hosting'
         ? (isFirstActivation ? 'hosting_create' : 'hosting_cycle')
-        : (isFirstActivation ? 'subscription_create' : planChanged ? 'subscription_downgrade' : 'subscription_cycle'));
+        : (isScheduledDowngrade || (!isFirstActivation && planChanged) ? 'subscription_downgrade'
+            : isFirstActivation ? 'subscription_create' : 'subscription_cycle'));
 
     if (replacedLocally) {
         // Money was collected on a subscription we already replaced/ended — record it, don't revive it
@@ -376,7 +380,7 @@ export async function recordCharge(o: {
         product,
     });
 
-    if (invoice.created && isFirstActivation && !replacedLocally && product === 'search') {
+    if (invoice.created && isFirstActivation && !isScheduledDowngrade && !replacedLocally && product === 'search') {
         const tenants: any = await query('SELECT store_name, email FROM tenants WHERE id = ?', [tenantId]);
         if (tenants?.[0]) {
             sendSubscriptionWelcomeEmail(tenants[0].email, tenants[0].store_name, plan.name, parseFloat(plan.price), periodEnd, plan.currency || currency)
@@ -385,6 +389,46 @@ export async function recordCharge(o: {
     }
 
     return { duplicate: !invoice.created, invoiceNumber: invoice.invoiceNumber, plan, periodStart, periodEnd, amount, currency };
+}
+
+// ─── Downgrade by replacement ─────────────────────────────────────────────────
+// Razorpay does not let a subscription paid with an Indian (domestic) card change
+// plan, so a downgrade there is a NEW subscription on the lower plan whose first
+// charge is when the current paid period ends. Once the customer has authorised
+// it, the current subscription stops renewing (access continues until its period
+// end) and shows the downgrade as pending; an earlier scheduled one is dropped.
+async function scheduleReplacement(product: Product, newRow: any) {
+    const cfg = PRODUCTS[product];
+    const tenantId = Number(newRow.tenant_id);
+    const others: any = await query(
+        `SELECT * FROM ${cfg.subTable} WHERE tenant_id = ? AND id <> ? AND status IN ('active','trialing')`,
+        [tenantId, newRow.id]
+    );
+    for (const old of others) {
+        if (old.razorpay_subscription_id && !TERMINAL_GATEWAY_STATUSES.has(old.gateway_status)) {
+            // A running cycle ends normally; a subscription without one yet (prepaid plan change, scheduled plan) ends now
+            const atCycleEnd = old.status === 'active' && !['created', 'authenticated'].includes(old.gateway_status);
+            try {
+                const { client } = await getRazorpayClient();
+                await client.subscriptions.cancel(old.razorpay_subscription_id, atCycleEnd);
+            } catch (e: any) {
+                const detail = e?.error?.description || e?.message || '';
+                if (!/cancelled|not cancellable/i.test(detail)) {
+                    // Never leave two mandates charging the same customer — fail so the webhook retries
+                    throw new Error(`Could not stop ${old.razorpay_subscription_id} for the scheduled downgrade: ${detail}`);
+                }
+            }
+        }
+        if (old.status === 'active') {
+            const pending = product === 'search' ? ', pending_plan_id = ?, pending_plan_change_at = current_period_end' : '';
+            await query(
+                `UPDATE ${cfg.subTable} SET cancel_at_period_end = 1, cancelled_at = COALESCE(cancelled_at, NOW())${pending} WHERE id = ?`,
+                product === 'search' ? [newRow[cfg.planFk], old.id] : [old.id]
+            );
+        } else {
+            await query(`UPDATE ${cfg.subTable} SET status = 'cancelled', cancelled_at = COALESCE(cancelled_at, NOW()) WHERE id = ?`, [old.id]);
+        }
+    }
 }
 
 // ─── Mandate authorised (subscription.authenticated / checkout verify) ────────
@@ -410,6 +454,35 @@ export async function handleAuthenticated(o: { product: Product; rzpSub: any; pa
             notes: 'Plan change — first cycle paid upfront',
         });
         return { checkoutType, charge };
+    }
+
+    if (checkoutType === 'downgrade') {
+        const promoted: any = await query(
+            `UPDATE ${cfg.subTable} SET status = 'trialing', gateway_status = ?, gateway_event_at = ?
+             WHERE id = ? AND status = 'incomplete'`,
+            [rzpSub.status || 'authenticated', eventAt, row.id]
+        );
+        if (promoted.affectedRows > 0) {
+            await scheduleReplacement(product, row);
+            await invalidateTenantCaches(Number(row.tenant_id));
+        }
+        if (payment?.id) {
+            await recordOrder({
+                tenantId: Number(row.tenant_id),
+                planId: Number(row[cfg.planFk]),
+                razorpaySubscriptionId: rzpSub.id,
+                razorpayPaymentId: payment.id,
+                amount: Number(payment.amount || 0) / 100,
+                currency: String(payment.currency || row.currency || 'INR').toUpperCase(),
+                status: payment.status === 'refunded' ? 'refunded' : 'authorized',
+                method: payment.method || null,
+                email: payment.email || null,
+                contact: payment.contact || null,
+                notes: 'Card verified for the scheduled downgrade — token amount refunded, not a charge',
+                product,
+            });
+        }
+        return { checkoutType, startsAt: row.starts_at ? new Date(row.starts_at) : unixToDate(rzpSub.start_at) };
     }
 
     if (checkoutType === 'trial') {
@@ -660,7 +733,8 @@ export async function verifyCheckout(o: {
     // refunds it straight away, so by now that payment is usually 'refunded'.
     // Real charges (immediate / upgrade) must be authorized or captured.
     const payment: any = await client.payments.fetch(paymentId);
-    const acceptedStatuses = row.checkout_type === 'trial' ? ['authorized', 'captured', 'refunded'] : ['authorized', 'captured'];
+    const tokenOnly = row.checkout_type === 'trial' || row.checkout_type === 'downgrade';
+    const acceptedStatuses = tokenOnly ? ['authorized', 'captured', 'refunded'] : ['authorized', 'captured'];
     if (!payment || !acceptedStatuses.includes(payment.status)) {
         throw new BillingError(402, 'Payment was not completed');
     }
@@ -671,7 +745,7 @@ export async function verifyCheckout(o: {
     const VERIFY_EVENT_AT = 0;
     const checkoutType = (row.checkout_type || 'immediate') as CheckoutType;
 
-    if (checkoutType === 'trial' || checkoutType === 'upgrade') {
+    if (checkoutType === 'trial' || checkoutType === 'upgrade' || checkoutType === 'downgrade') {
         const r = await handleAuthenticated({ product, rzpSub, payment, eventAt: VERIFY_EVENT_AT });
         return {
             checkoutType,
@@ -700,7 +774,7 @@ export async function requestCancel(product: Product, tenantId: number): Promise
     const subs: any = await query(
         `SELECT * FROM ${cfg.subTable}
          WHERE tenant_id = ? AND status IN ('active','trialing')
-         ORDER BY status = 'active' DESC, current_period_end DESC, id DESC LIMIT 1`,
+         ORDER BY cancel_at_period_end ASC, status = 'active' DESC, current_period_end DESC, id DESC LIMIT 1`,
         [tenantId]
     );
     const sub = subs?.[0];
@@ -720,6 +794,25 @@ export async function requestCancel(product: Product, tenantId: number): Promise
             throw new BillingError(502, 'Could not cancel the subscription with the payment gateway. Please try again.');
         }
     };
+
+    if (sub.status === 'trialing' && sub.checkout_type === 'downgrade') {
+        // Scheduled replacement (Indian-card downgrade): drop it; the current plan already ends at its period end
+        await cancelAtGateway(false);
+        await query(`UPDATE ${cfg.subTable} SET status = 'cancelled', cancelled_at = NOW() WHERE id = ?`, [sub.id]);
+        const current: any = await query(
+            `SELECT current_period_end FROM ${cfg.subTable} WHERE tenant_id = ? AND status = 'active' AND cancel_at_period_end = 1 ORDER BY current_period_end DESC LIMIT 1`,
+            [tenantId]
+        );
+        if (product === 'search') {
+            await query(`UPDATE ${cfg.subTable} SET pending_plan_id = NULL, pending_plan_change_at = NULL WHERE tenant_id = ? AND status = 'active'`, [tenantId]);
+        }
+        await invalidateTenantCaches(tenantId);
+        const accessUntil = current?.[0]?.current_period_end ? new Date(current[0].current_period_end) : null;
+        return {
+            message: `Subscription cancelled — the scheduled plan change will not start and you will not be charged again. You keep access until ${accessUntil ? accessUntil.toLocaleDateString() : 'the end of the billing period'}.`,
+            accessUntil,
+        };
+    }
 
     if (sub.status === 'trialing') {
         await cancelAtGateway(false);

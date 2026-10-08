@@ -332,7 +332,21 @@ export const checkPlanLimits = async (req: AuthRequest, res: Response, next: Nex
           req.tenant = { ...req.tenant, maxProducts: 100, maxRequests: 1000 };
           return next();
         }
-        return res.status(403).json({ error: 'No active subscription' });
+        // A paid plan just ended and its scheduled replacement (downgrade) is
+        // awaiting its first charge — keep serving on the new plan meanwhile.
+        const replacement: any = tenant[0]?.awaiting_first_charge ? await query(
+          `SELECT s.*, p.max_products, p.max_requests_per_month
+           FROM subscriptions s JOIN plans p ON s.plan_id = p.id
+           WHERE s.tenant_id = ? AND s.status = 'trialing' AND s.checkout_type = 'downgrade'
+             AND s.starts_at <= NOW() AND s.starts_at > DATE_SUB(NOW(), INTERVAL ${TRIAL_FIRST_CHARGE_GRACE_HOURS} HOUR)
+           ORDER BY s.id DESC LIMIT 1`,
+          [tenantId]
+        ) : [];
+        if (replacement.length === 0) {
+          return res.status(403).json({ error: 'No active subscription' });
+        }
+        planData = replacement[0];
+        planCache.set(planKey, planData, 5 * 60 * 1000);
       }
 
       planData = subscriptions[0];

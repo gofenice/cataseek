@@ -69,7 +69,7 @@ function effectiveMonthlyPrice(price: number | string, billingPeriod: string): n
 // ─── Helper: this tenant's current active subscription + plan details ─────────
 async function getActiveSubscriptionWithPlan(tenantId: number): Promise<any | null> {
     const subs: any = await query(
-        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id, s.gateway_status, s.cancel_at_period_end, s.currency,
+        `SELECT s.id, s.current_period_end, s.razorpay_subscription_id, s.gateway_status, s.cancel_at_period_end, s.currency, s.pending_plan_id,
                 p.id AS plan_id, p.name AS plan_name, COALESCE(cp.price, p.price) AS price, p.billing_period
          FROM subscriptions s
          JOIN plans p ON s.plan_id = p.id
@@ -408,7 +408,7 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
             [tenantId, plan.id]
         );
         if (scheduled.length > 0) {
-            return res.status(400).json({ error: 'This plan is already scheduled to start when your free trial ends.' });
+            return res.status(400).json({ error: 'This plan is already scheduled to start on your next billing date.' });
         }
 
         const tenants: any = await query('SELECT id, store_name, email, status, trial_ends_at FROM tenants WHERE id = ?', [tenantId]);
@@ -524,6 +524,19 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
         const plan = r.plan;
         const planInfo = { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period };
 
+        if (r.checkoutType === 'downgrade') {
+            const when = r.startsAt ? new Date(r.startsAt).toLocaleDateString() : 'your renewal date';
+            return res.json({
+                message: `Downgrade to ${plan.name} scheduled — your current plan continues until ${when}, then ${plan.name} starts and is charged.`,
+                checkoutType: r.checkoutType,
+                plan: planInfo,
+                firstChargeAt: r.startsAt,
+                firstCharge: 0,
+                creditApplied: 0,
+                currency: plan.currency,
+            });
+        }
+
         if (r.checkoutType === 'trial') {
             return res.json({
                 message: `${plan.name} plan scheduled — your free trial continues and your first payment is on ${r.startsAt ? new Date(r.startsAt).toLocaleDateString() : 'the day your trial ends'}.`,
@@ -631,6 +644,57 @@ router.post('/razorpay/webhook', async (req: AuthRequest, res: Response) => {
     }
 });
 
+// Razorpay's answers when a subscription paid with an Indian card is asked to change plan
+const DOMESTIC_CARD_UPDATE_REFUSED = /domestic card|card mandate/i;
+
+// Downgrade for Indian-card subscriptions: a new Razorpay subscription on the lower
+// plan, first charge at the current period end, opened in Checkout like a trial
+// (the card is verified with a refunded token amount). The current subscription is
+// only stopped once this one is authorised — see scheduleReplacement.
+async function startReplacementDowngrade(req: AuthRequest, res: Response, sub: any, newPlan: any) {
+    const tenantId = req.user.id;
+    const startsAt = new Date(sub.current_period_end);
+    if (startsAt.getTime() - Date.now() < 60 * 60 * 1000) {
+        return res.status(400).json({ error: 'Your plan renews within the hour. Please schedule the downgrade after the renewal.' });
+    }
+    const config = await getRazorpayConfig();
+    const tenants: any = await query('SELECT id, store_name, email FROM tenants WHERE id = ?', [tenantId]);
+    const tenant = tenants[0];
+    try {
+        const subscription = await createRazorpaySubscription(tenant, newPlan, {
+            product: 'search',
+            checkoutType: 'downgrade',
+            startAt: Math.floor(startsAt.getTime() / 1000),
+        });
+        await createCheckoutRecord({
+            product: 'search', tenantId, planId: newPlan.id, razorpaySubscriptionId: subscription.id,
+            checkoutType: 'downgrade', startsAt, currency: newPlan.currency,
+        });
+        await recordOrder({
+            tenantId, planId: newPlan.id, planName: newPlan.name, razorpaySubscriptionId: subscription.id,
+            amount: 0, currency: newPlan.currency, status: 'created', email: tenant.email,
+            notes: `Downgrade checkout initiated (first charge ${startsAt.toISOString()})`,
+        });
+        return res.json({
+            requiresCheckout: true,
+            subscriptionId: subscription.id,
+            keyId: config.key_id,
+            currency: newPlan.currency,
+            plan: { id: newPlan.id, name: newPlan.name, price: newPlan.price, billing_period: newPlan.billing_period },
+            checkoutType: 'downgrade',
+            firstChargeAt: startsAt,
+            prefill: { email: tenant.email, name: tenant.store_name },
+        });
+    } catch (e: any) {
+        if (e instanceof PlanMappingError) {
+            console.error('Razorpay plan mapping error:', e.message);
+            return res.status(409).json({ error: 'This plan is not available for online payment yet. Please contact support.' });
+        }
+        console.error('Replacement downgrade error:', e?.error?.description || e?.message);
+        return res.status(500).json({ error: 'Could not schedule the downgrade with the payment gateway. Please try again.' });
+    }
+}
+
 // ─── POST /api/billing/downgrade ───────────────────────────────────────────────
 // Defers a plan-change to a cheaper plan until current_period_end instead of
 // switching immediately: no proration credit, no invoice, no refund. The
@@ -657,7 +721,10 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
         if (!newPlan) return res.status(409).json({ error: `This plan is not available in ${subCurrency}. Please contact support.` });
 
         if (sub.cancel_at_period_end) {
-            return res.status(400).json({ error: `Your subscription is cancelled and ends on ${new Date(sub.current_period_end).toLocaleDateString()}. You can choose a new plan once it ends.` });
+            const msg = sub.pending_plan_id
+                ? `A change to another plan is already scheduled for ${new Date(sub.current_period_end).toLocaleDateString()}. Cancel your subscription first to choose a different one.`
+                : `Your subscription is cancelled and ends on ${new Date(sub.current_period_end).toLocaleDateString()}. You can choose a new plan once it ends.`;
+            return res.status(400).json({ error: msg });
         }
 
         if (Number(newPlan.id) === Number(sub.plan_id)) {
@@ -694,7 +761,14 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
                     schedule_change_at: scheduleChangeAt,
                 } as any);
             } catch (e: any) {
-                console.error('Razorpay downgrade schedule error:', e?.error?.description || e?.message);
+                const detail = e?.error?.description || e?.message || '';
+                // Indian (domestic) card subscriptions can't change plan at Razorpay —
+                // replace them: the customer authorises a new subscription on the
+                // lower plan that starts when the current paid period ends.
+                if (DOMESTIC_CARD_UPDATE_REFUSED.test(detail)) {
+                    return startReplacementDowngrade(req, res, sub, newPlan);
+                }
+                console.error('Razorpay downgrade schedule error:', detail);
                 return res.status(500).json({ error: 'Could not schedule the downgrade with the payment gateway. Please try again.' });
             }
         }

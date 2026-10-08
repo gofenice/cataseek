@@ -389,7 +389,7 @@ export async function createRazorpaySubscription(
     opts: {
         table?: PlanTable;
         product?: 'search' | 'hosting';
-        checkoutType?: 'immediate' | 'trial' | 'upgrade';
+        checkoutType?: 'immediate' | 'trial' | 'upgrade' | 'downgrade';
         startAt?: number; // unix seconds — recurring charges begin here
         upfront?: { amount: number; label: string }; // collected at checkout
     } = {}

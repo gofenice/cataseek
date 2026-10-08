@@ -25,7 +25,8 @@ interface Subscription {
     plan_name: string;
     price: number;
     billing_period: string;
-    status: string; // 'active' | 'trialing' (plan starts when the free trial ends)
+    status: string; // 'active' | 'trialing' (plan starts on starts_at: trial end, or a scheduled downgrade)
+    checkout_type?: string | null;
     gateway_status?: string | null; // Razorpay status — 'pending' = renewal payment retrying
     cancel_at_period_end?: number | boolean;
     starts_at?: string | null;
@@ -88,6 +89,7 @@ interface Confirmation {
     creditApplied?: number;
     firstCharge?: number;
     trial?: boolean;          // subscribed during the free trial — nothing charged yet
+    downgrade?: boolean;      // lower plan scheduled to replace the current one at its period end
     firstChargeAt?: string;   // when the first payment happens (trial end)
 }
 
@@ -230,7 +232,13 @@ const Billing: React.FC = () => {
     const handleRazorpayCheckout = async (planId: number) => {
         // 1. Create the Razorpay subscription server-side
         const res = await api.post('/billing/razorpay/subscribe', { planId });
-        const { subscriptionId, keyId, plan, prefill, checkoutType, firstChargeAt } = res.data;
+        await openCheckout(res.data);
+    };
+
+    // Opens Razorpay Checkout for a subscription the server created (new plan,
+    // trial, upgrade, or a downgrade that needs the card authorised again)
+    const openCheckout = async (data: any) => {
+        const { subscriptionId, keyId, plan, prefill, checkoutType, firstChargeAt } = data;
 
         // 2. Open Razorpay Checkout
         await loadRazorpayScript();
@@ -241,7 +249,9 @@ const Billing: React.FC = () => {
                 name: 'Cataseek',
                 description: checkoutType === 'trial'
                     ? `${plan.name} Plan — free until ${fmt(firstChargeAt)}, then ${plan.billing_period}`
-                    : `${plan.name} Plan — ${plan.billing_period}`,
+                    : checkoutType === 'downgrade'
+                        ? `${plan.name} Plan — starts ${fmt(firstChargeAt)}, ${plan.billing_period}`
+                        : `${plan.name} Plan — ${plan.billing_period}`,
                 prefill: { email: prefill?.email || '', name: prefill?.name || '' },
                 theme: { color: '#059669' },
                 handler: async (response: any) => {
@@ -262,6 +272,7 @@ const Billing: React.FC = () => {
                             creditApplied: verifyRes.data.creditApplied,
                             firstCharge: verifyRes.data.firstCharge,
                             trial: verifyRes.data.checkoutType === 'trial',
+                            downgrade: verifyRes.data.checkoutType === 'downgrade',
                             firstChargeAt: verifyRes.data.firstChargeAt,
                         });
                         resolve();
@@ -292,7 +303,13 @@ const Billing: React.FC = () => {
                 // Deferred downgrade: no checkout, no proration — just schedule the
                 // swap for current_period_end. Customer keeps today's plan until then.
                 const res = await api.post('/billing/downgrade', { planId });
-                setMessage(`✅ ${res.data.message}`);
+                if (res.data.requiresCheckout) {
+                    // Indian-card subscriptions can't change plan at Razorpay: the
+                    // customer authorises the lower plan, which starts at the renewal date
+                    await openCheckout(res.data);
+                } else {
+                    setMessage(`✅ ${res.data.message}`);
+                }
             } else if (payConfig?.gateway === 'razorpay') {
                 await handleRazorpayCheckout(planId);
             } else {
@@ -421,10 +438,12 @@ const Billing: React.FC = () => {
                         </div>
                         <div>
                             <h2 style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--text-main)', margin: '0 0 6px' }}>
-                                {confirmation.trial ? 'Plan Scheduled!' : 'Payment Successful!'}
+                                {confirmation.downgrade ? 'Downgrade Scheduled!' : confirmation.trial ? 'Plan Scheduled!' : 'Payment Successful!'}
                             </h2>
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0 }}>
-                                {confirmation.trial
+                                {confirmation.downgrade
+                                    ? 'Nothing has been charged. Your current plan continues until its renewal date, then this plan starts automatically.'
+                                    : confirmation.trial
                                     ? 'Your free trial continues. Nothing has been charged — your plan starts automatically when the trial ends.'
                                     : 'Your subscription is now active. A copy of the invoice has been emailed to you.'}
                             </p>
@@ -437,7 +456,7 @@ const Billing: React.FC = () => {
                                     ['Unused plan credit', `−${money(confirmation.creditApplied)}`],
                                     ['First payment', money(confirmation.firstCharge)],
                                 ] : []),
-                                ...(confirmation.trial ? [
+                                ...(confirmation.trial || confirmation.downgrade ? [
                                     ['First payment', fmt(confirmation.firstChargeAt || null)],
                                 ] : [
                                     ['Invoice', confirmation.invoiceNumber || '—'],
@@ -516,9 +535,9 @@ const Billing: React.FC = () => {
                                 </div>
                             ) : subscription.status === 'trialing' ? (
                                 <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
-                                    <Clock size={12} /> {subscription.plan_name} starts {fmt(subscription.starts_at || null)} — free trial until then
+                                    <Clock size={12} /> {subscription.plan_name} starts {fmt(subscription.starts_at || null)}{subscription.checkout_type === 'downgrade' ? '' : ' — free trial until then'}
                                 </div>
-                            ) : subscription.cancel_at_period_end ? (
+                            ) : subscription.cancel_at_period_end && !subscription.pending_plan_id ? (
                                 <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <XCircle size={12} /> Cancelled · access until {fmt(subscription.current_period_end)}
                                 </div>
@@ -537,7 +556,7 @@ const Billing: React.FC = () => {
                                     <Clock size={12} /> Downgrading to {subscription.pending_plan_name} on {fmt(subscription.current_period_end)}
                                 </div>
                             )}
-                            {!subscription.cancel_at_period_end && !paused && (
+                            {(!subscription.cancel_at_period_end || subscription.pending_plan_id) && !paused && (
                             <button
                                 onClick={handleCancel}
                                 disabled={cancelling}
