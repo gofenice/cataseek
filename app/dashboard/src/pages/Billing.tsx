@@ -27,6 +27,7 @@ interface Subscription {
     billing_period: string;
     status: string; // 'active' | 'trialing' (plan starts on starts_at: trial end, or a scheduled downgrade)
     checkout_type?: string | null;
+    awaiting_first_charge?: boolean; // bank mandate registered, first debit not collected yet
     gateway_status?: string | null; // Razorpay status — 'pending' = renewal payment retrying
     cancel_at_period_end?: number | boolean;
     starts_at?: string | null;
@@ -263,6 +264,12 @@ const Billing: React.FC = () => {
                             razorpay_subscription_id: response.razorpay_subscription_id,
                             razorpay_signature: response.razorpay_signature,
                         });
+                        if (verifyRes.data.awaitingFirstCharge) {
+                            // eMandate: nothing charged yet — the bank debits the first payment later
+                            setMessage(`✅ ${verifyRes.data.message}`);
+                            resolve();
+                            return;
+                        }
                         setConfirmation({
                             planName: verifyRes.data.plan.name,
                             price: verifyRes.data.plan.price,
@@ -523,13 +530,17 @@ const Billing: React.FC = () => {
                         <CreditCard size={16} color="var(--primary)" />
                         <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Current Plan</span>
                     </div>
-                    <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)' }}>{paused ? subscription!.plan_name : usage?.planName || 'Trial'}</div>
+                    <div style={{ fontSize: '1.75rem', fontWeight: 700, color: 'var(--text-main)' }}>{paused || subscription?.awaiting_first_charge ? subscription!.plan_name : usage?.planName || 'Trial'}</div>
                     {subscription ? (
                         <>
                             <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 4 }}>
                                 {money(subscription.price)} / {subscription.billing_period}
                             </div>
-                            {paused ? (
+                            {subscription.awaiting_first_charge ? (
+                                <div style={{ fontSize: '0.8rem', color: '#f59e0b', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <Clock size={12} /> Waiting for the first payment from your bank — the plan activates once it is collected
+                                </div>
+                            ) : paused ? (
                                 <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <XCircle size={12} /> Paused — payments failed after several retries. Choose a plan below to restart.
                                 </div>
@@ -556,7 +567,7 @@ const Billing: React.FC = () => {
                                     <Clock size={12} /> Downgrading to {subscription.pending_plan_name} on {fmt(subscription.current_period_end)}
                                 </div>
                             )}
-                            {(!subscription.cancel_at_period_end || subscription.pending_plan_id) && !paused && (
+                            {(!subscription.cancel_at_period_end || subscription.pending_plan_id) && !paused && !subscription.awaiting_first_charge && (
                             <button
                                 onClick={handleCancel}
                                 disabled={cancelling}

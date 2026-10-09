@@ -19,6 +19,7 @@ import {
     BillingError,
     createCheckoutRecord,
     expireEndedSubscriptions,
+    findAwaitingFirstCharge,
     makeInvoiceNumber,
     processWebhookEvent,
     remainingTrialEnd,
@@ -386,6 +387,11 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const plans: any = await query('SELECT * FROM plans WHERE id = ? AND is_active = TRUE', [planId]);
         if (!plans || plans.length === 0) return res.status(404).json({ error: 'Plan not found' });
 
+        // A bank mandate from an earlier checkout is still waiting for its first debit
+        if (await findAwaitingFirstCharge('search', tenantId)) {
+            return res.status(400).json({ error: 'Your bank is still processing the first payment of your previous checkout. Your plan activates as soon as it is collected — please wait before starting another one.' });
+        }
+
         // The plan as sold in this tenant's billing currency
         const billing = await resolveTenantCurrency(tenantId, req);
         const plan = await localizePlan('plans', plans[0], billing.currency);
@@ -524,6 +530,16 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
         const plan = r.plan;
         const planInfo = { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period };
 
+        if (r.awaitingFirstCharge) {
+            return res.json({
+                message: `Your bank mandate is set up. ${plan.name} activates as soon as the first payment is collected from your bank account — usually within 1–2 working days. You'll receive the invoice by email.`,
+                checkoutType: r.checkoutType,
+                awaitingFirstCharge: true,
+                plan: planInfo,
+                currency: plan.currency,
+            });
+        }
+
         if (r.checkoutType === 'downgrade') {
             const when = r.startsAt ? new Date(r.startsAt).toLocaleDateString() : 'your renewal date';
             return res.json({
@@ -644,8 +660,9 @@ router.post('/razorpay/webhook', async (req: AuthRequest, res: Response) => {
     }
 });
 
-// Razorpay's answers when a subscription paid with an Indian card is asked to change plan
-const DOMESTIC_CARD_UPDATE_REFUSED = /domestic card|card mandate/i;
+// Razorpay's answers when a subscription paid with an Indian card or UPI is asked to change plan
+// ("…when payment mode is domestic card", "…when payment mode is upi", "…card mandate is applicable")
+const DOMESTIC_CARD_UPDATE_REFUSED = /payment mode is|card mandate/i;
 
 // Downgrade for Indian-card subscriptions: a new Razorpay subscription on the lower
 // plan, first charge at the current period end, opened in Checkout like a trial
@@ -762,7 +779,7 @@ router.post('/downgrade', authenticateJWT, async (req: AuthRequest, res: Respons
                 } as any);
             } catch (e: any) {
                 const detail = e?.error?.description || e?.message || '';
-                // Indian (domestic) card subscriptions can't change plan at Razorpay —
+                // Indian (domestic) card and UPI subscriptions can't change plan at Razorpay —
                 // replace them: the customer authorises a new subscription on the
                 // lower plan that starts when the current paid period ends.
                 if (DOMESTIC_CARD_UPDATE_REFUSED.test(detail)) {

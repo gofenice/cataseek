@@ -431,18 +431,71 @@ async function scheduleReplacement(product: Product, newRow: any) {
     }
 }
 
+// ─── Mandate registered, first payment still to come ──────────────────────────
+// With eMandate (bank account) the checkout payment is a ₹0 mandate registration;
+// the bank debits the first amount later and Razorpay reports it with
+// subscription.charged. Such a checkout is not a charge: the row stays
+// 'incomplete' (no access, no invoice) with gateway_status 'authenticated' until
+// that first charge arrives.
+const PENDING_FIRST_CHARGE_DAYS = 7;
+
+function isMandateOnly(payment: any): boolean {
+    return !!payment && Number(payment.amount || 0) === 0;
+}
+
+async function markAwaitingFirstCharge(product: Product, row: any, rzpSub: any, payment: any) {
+    const cfg = PRODUCTS[product];
+    await query(
+        `UPDATE ${cfg.subTable} SET gateway_status = 'authenticated' WHERE id = ? AND status = 'incomplete'`,
+        [row.id]
+    );
+    await recordOrder({
+        tenantId: Number(row.tenant_id),
+        planId: Number(row[cfg.planFk]),
+        razorpaySubscriptionId: rzpSub.id,
+        razorpayPaymentId: payment.id,
+        amount: 0,
+        currency: String(payment.currency || row.currency || 'INR').toUpperCase(),
+        status: 'authorized',
+        method: payment.method || null,
+        email: payment.email || null,
+        contact: payment.contact || null,
+        notes: 'Bank mandate registered — first payment pending',
+        product,
+    });
+}
+
+// A recent checkout whose mandate is registered but not yet charged (see above)
+export async function findAwaitingFirstCharge(product: Product, tenantId: number): Promise<any | null> {
+    const cfg = PRODUCTS[product];
+    await ensureTables(product);
+    const rows: any = await query(
+        `SELECT * FROM ${cfg.subTable}
+         WHERE tenant_id = ? AND status = 'incomplete' AND gateway_status = 'authenticated'
+           AND created_at > DATE_SUB(NOW(), INTERVAL ${PENDING_FIRST_CHARGE_DAYS} DAY)
+         ORDER BY id DESC LIMIT 1`,
+        [tenantId]
+    );
+    return rows?.[0] || null;
+}
+
 // ─── Mandate authorised (subscription.authenticated / checkout verify) ────────
 // trial   → nothing is charged; subscription waits for starts_at (= trial end)
 // upgrade → the upfront addon (discounted first cycle) was collected now
 // immediate → the first charge arrives separately (verify / subscription.charged)
 export async function handleAuthenticated(o: { product: Product; rzpSub: any; payment?: any; eventAt: number }): Promise<{
-    checkoutType: CheckoutType; charge?: Awaited<ReturnType<typeof recordCharge>>; startsAt?: Date | null;
+    checkoutType: CheckoutType; charge?: Awaited<ReturnType<typeof recordCharge>>; startsAt?: Date | null; awaitingFirstCharge?: boolean;
 }> {
     const { product, rzpSub, payment, eventAt } = o;
     const cfg = PRODUCTS[product];
     const row = await findSubscriptionByGatewayId(product, rzpSub.id);
     const checkoutType = ((row?.checkout_type || rzpSub.notes?.checkout_type || 'immediate') as CheckoutType);
     if (!row) return { checkoutType };
+
+    if (checkoutType === 'upgrade' && payment && isMandateOnly(payment)) {
+        await markAwaitingFirstCharge(product, row, rzpSub, payment);
+        return { checkoutType, awaitingFirstCharge: true };
+    }
 
     if (checkoutType === 'upgrade' && payment) {
         const start = unixToDate(payment.created_at) || new Date();
@@ -692,6 +745,7 @@ export async function verifyCheckout(o: {
     signature: string;
 }): Promise<{
     checkoutType: CheckoutType; plan: any; invoiceNumber?: string; periodEnd?: Date; amount?: number; startsAt?: Date | null; duplicate?: boolean;
+    awaitingFirstCharge?: boolean;
 }> {
     const { product, tenantId, paymentId, subscriptionId, signature } = o;
     const cfg = PRODUCTS[product];
@@ -750,12 +804,18 @@ export async function verifyCheckout(o: {
         return {
             checkoutType,
             plan,
+            awaitingFirstCharge: r.awaitingFirstCharge,
             startsAt: r.startsAt ?? (row.starts_at ? new Date(row.starts_at) : null),
             invoiceNumber: r.charge?.invoiceNumber,
             periodEnd: r.charge?.periodEnd,
             amount: r.charge?.amount,
             duplicate: r.charge?.duplicate,
         };
+    }
+
+    if (isMandateOnly(payment)) {
+        await markAwaitingFirstCharge(product, row, rzpSub, payment);
+        return { checkoutType, plan, awaitingFirstCharge: true };
     }
 
     const charge = await recordCharge({ product, rzpSub, payment, eventAt: VERIFY_EVENT_AT });

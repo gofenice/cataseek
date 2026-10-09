@@ -5,7 +5,7 @@ import { ensurePaymentTables } from '../services/razorpay.service';
 import { verifyToken } from '../utils/auth';
 import { localizePlans, resolveTenantCurrency, resolveVisitorCurrency, subscriptionPriceJoin } from '../services/currency.service';
 import { applyDuePlanChange } from './billing.routes';
-import { expireEndedSubscriptions } from '../services/subscription-lifecycle.service';
+import { expireEndedSubscriptions, findAwaitingFirstCharge } from '../services/subscription-lifecycle.service';
 
 const router = express.Router();
 
@@ -65,6 +65,18 @@ router.get('/subscription', authenticateJWT, async (req: AuthRequest, res) => {
     );
 
     if (!subscription || subscription.length === 0) {
+      // Bank mandate registered, first debit not collected yet — shown, grants nothing
+      const pending = await findAwaitingFirstCharge('search', req.user.id);
+      if (pending) {
+        const rows: any = await query(
+          `SELECT s.*, p.name AS plan_name, COALESCE(cp.price, p.price) AS price, p.billing_period, p.max_products, p.max_requests_per_month, p.features
+           FROM subscriptions s JOIN plans p ON s.plan_id = p.id
+           ${subscriptionPriceJoin('plans', 'p', 's', 'cp')}
+           WHERE s.id = ?`,
+          [pending.id]
+        );
+        return res.json({ subscription: { ...rows[0], awaiting_first_charge: true } });
+      }
       return res.json({ subscription: null });
     }
 

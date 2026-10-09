@@ -8,6 +8,7 @@ import {
     BillingError,
     createCheckoutRecord,
     expireEndedSubscriptions,
+    findAwaitingFirstCharge,
     requestCancel,
     verifyCheckout,
 } from '../services/subscription-lifecycle.service';
@@ -82,6 +83,10 @@ router.post('/razorpay/subscribe', authenticateJWT, async (req: AuthRequest, res
         const plan = await localizePlan('hosting_plans', plans[0], billing.currency);
         if (!plan) return res.status(409).json({ error: `This hosting plan is not available in ${billing.currency} yet. Please contact support.` });
 
+        if (await findAwaitingFirstCharge('hosting', tenantId)) {
+            return res.status(400).json({ error: 'Your bank is still processing the first payment of your previous hosting checkout. Please wait until it is collected.' });
+        }
+
         // Buying the plan already running would charge a second full cycle
         const current: any = await query(
             `SELECT id FROM hosting_subscriptions
@@ -152,6 +157,15 @@ router.post('/razorpay/verify', authenticateJWT, async (req: AuthRequest, res: R
             signature: razorpay_signature,
         });
         const plan = r.plan;
+
+        if (r.awaitingFirstCharge) {
+            return res.json({
+                message: `Your bank mandate is set up. Hosting ${plan.name} activates as soon as the first payment is collected from your bank account — usually within 1–2 working days.`,
+                awaitingFirstCharge: true,
+                plan: { id: plan.id, name: plan.name, price: plan.price, billing_period: plan.billing_period },
+                currency: plan.currency,
+            });
+        }
 
         res.json({
             message: `Hosting plan ${plan.name} activated`,

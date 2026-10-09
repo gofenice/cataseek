@@ -120,6 +120,12 @@ const Hosting: React.FC = () => {
                             razorpay_subscription_id: response.razorpay_subscription_id,
                             razorpay_signature: response.razorpay_signature,
                         });
+                        if (verifyRes.data.awaitingFirstCharge) {
+                            // eMandate: nothing charged yet — the bank debits the first payment later
+                            setMessage(`✅ ${verifyRes.data.message}`);
+                            resolve();
+                            return;
+                        }
                         setConfirmation({
                             planName: verifyRes.data.plan.name,
                             price: verifyRes.data.plan.price,
